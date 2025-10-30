@@ -1,0 +1,66 @@
+version: '3.6'
+services:
+  app:
+    image: asoltys/dgen-server
+    container_name: app
+    depends_on:
+      - db
+      - bc
+      - lq
+    command: "bun run dev"
+    environment:
+      NODE_OPTIONS: "--import ./hooks.js"
+      NODE_ENV: development
+      URL: http://localhost:5173
+      BREEZ_API_KEY: ${BREEZ_API_KEY}
+    ports:
+      - '3119:3119'
+    volumes:
+      - .aws/:/root/.aws
+      - ./:/home/bun/app
+      - ./logs:/logs
+      - ./data/bitcoin/bitcoin.conf:/bitcoin.conf
+    restart: always
+  bc:
+    image: asoltys/bitcoin
+    container_name: bc
+    ports:
+      - '18443:18443'
+    volumes:
+      - ./data/bitcoin:/home/bitcoin/.bitcoin
+    restart: always
+  lq:
+    image: asoltys/liquid:23.x
+    container_name: lq
+    volumes:
+      - ./data/liquid:/home/elements/.elements
+    restart: always
+    ports:
+      - 7043:7040
+  db:
+    image: eqalpha/keydb:alpine_x86_64_v6.3.4
+    container_name: db
+    ports:
+      - '6379:6379'
+    volumes:
+      - ./data/db:/data
+      - ./data/db/keydb.conf:/etc/keydb/keydb.conf
+    restart: always
+  archive:
+    image: eqalpha/keydb:alpine_x86_64_v6.3.4
+    container_name: archive
+    ports:
+      - '6380:6379'
+    volumes:
+      - ./data/archive:/data
+    restart: always
+  nostr:
+    container_name: nostr
+    image: asoltys/nostr-rs-relay
+    restart: always
+    user: 100:100
+    volumes:
+      - "./data/nostr/data:/usr/src/app/db" 
+      - "./data/nostr/config.toml:/usr/src/app/config.toml" 
+    ports:
+      - '8082:8080'

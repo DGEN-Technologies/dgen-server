@@ -1,0 +1,4 @@
+[install.scopes]
+"@cashu" = { url = "https://registry.npmjs.org/" }
+
+# No other config needed - Bun should read tsconfig.json automatically

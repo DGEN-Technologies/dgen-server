@@ -1,0 +1,18 @@
+# Simple Caddy configuration for local development
+# This file is optional - you can run the backend and frontend directly
+
+# To use Caddy for local development:
+# 1. Install Caddy: https://caddyserver.com/docs/install
+# 2. Run: caddy run --config Caddyfile
+
+localhost {
+    # Backend API proxy
+    handle /api/* {
+        reverse_proxy localhost:3119
+    }
+    
+    # Frontend development server proxy
+    handle {
+        reverse_proxy localhost:5173
+    }
+}

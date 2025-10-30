@@ -1,0 +1,11 @@
+{
+  "$schema": "https://railway.app/railway.schema.json",
+  "build": {
+    "buildCommand": "bun install"
+  },
+  "deploy": {
+    "startCommand": "bun start",
+    "healthcheckPath": "/health/live",
+    "healthcheckTimeout": 100
+  }
+}

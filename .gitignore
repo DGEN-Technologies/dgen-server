@@ -1,0 +1,27 @@
+node_modules/
+.pnpm*
+package-lock.json
+yarn.lock
+pnpm-lock.yaml
+data
+# config.ts  # Needed for deployment - don't ignore
+compose.yml
+.env
+*.flitevox
+mimic
+watcher.sh
+.aws
+*.js
+routes/**/*.js
+lib/**/*.js
+!tests/**/*.js
+!scripts/**/*.js
+watcher.log
+.history/
+res
+req
+nobal.sh
+littlefs.img
+printer
+failedlogins.txt
+*.log

@@ -1,0 +1,37 @@
+export default {
+  archive: "redis://archive",
+  db: "redis://db",
+  nostr: "ws://nostr:8080",
+  relays: [
+    "ws://nostr:8080",
+    "wss://nostr-pub.wellorder.net",
+    "wss://brb.io",
+    "wss://nostr.v0l.io",
+    "wss://relay.nostr.bg",
+    "wss://nostr.orangepill.dev"
+  ],
+  jwt: "00d0ab4f7738a83feb37f661526512063c41e49278b7c32cba87314269a5788b",
+  bitcoin: {
+    host: "bc",
+    wallet: "dgen",
+    user: "admin1",
+    password: "123",
+    network: "regtest",
+    port: 18443,
+  },
+  liquid: {
+    host: "lq",
+    wallet: "dgen",
+    user: "admin1",
+    password: "123",
+    network: "regtest",
+    port: 7040,
+    btc: "5ac9f65c0efcc4775e0baec4ec03abdde22473cd3cf33c0419ca290e0751b225"
+  },
+  breezApiKey: process.env.BREEZ_API_KEY,
+  fee: 0.001,
+  adminpass: "pwa",
+  support: "support@dgentech.io",
+  nostrKey: "nsec13wekuqstlsyfrzm369yh6vjaphslq5pq9kze74acqqynjm8lvpms4qzsx9",
+  mintUrl: "http://mint:3338",
+};

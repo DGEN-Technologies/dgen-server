@@ -1,0 +1,129 @@
+import { getConfig } from "./config-loader";
+import { db, g } from "./db";
+// import ln from "./ln"; // TODO: Replace with Breez SDK
+import { err, l, warn } from "./logging";
+import { mail, templates } from "./mail";
+import mqtt from "./mqtt";
+import { publish, serverSecret } from "./nostr";
+import { emit } from "./sockets";
+import { f, fiat, fmt, getUser, link, nada, t } from "./utils";
+import { hexToBytes } from "@noble/hashes/utils";
+import { finalizeEvent, nip04 } from "nostr-tools";
+import webpush from "web-push";
+
+const config = getConfig();
+if ((config as any).vapid) {
+  webpush.setVapidDetails(
+    `mailto:${config.support}`,
+    (config as any).vapid.pk,
+    (config as any).vapid.sk,
+  );
+}
+
+export const notify = async (p, user, withdrawal) => {
+  emit(user.id, "payment", p);
+  let { username } = user;
+  const { paymentReceived } = t(user);
+  username = username.replace(/\s/g, "");
+
+  try {
+    if (user.verified && user.notify) {
+      mail(user, paymentReceived, templates.paymentReceived, {
+        ...t(user),
+        username,
+        payment: {
+          amount: fmt(p.amount),
+          link: link(p.id),
+          tip: p.tip ? fmt(p.tip) : undefined,
+          fiat: f(fiat(p.amount, p.rate), p.currency),
+          fiatTip: p.tip ? f(fiat(p.tip, p.rate), p.currency) : undefined,
+          memo: p.memo,
+          items: p.items?.map((i) => {
+            return {
+              quantity: i.quantity,
+              name: i.name,
+              total: i.quantity * i.price,
+              totalFiat: f(i.quantity * i.price, p.currency),
+            };
+          }),
+        },
+        withdrawal,
+      });
+    }
+  } catch (e) {
+    err("problem emailing", e.message);
+  }
+
+  const subscriptions = await db.sMembers(`${user.id}:subscriptions`);
+
+  const payload = {
+    title: paymentReceived,
+    body: `${fmt(p.amount)} ${f(fiat(p.amount, p.rate), p.currency)}`,
+    url: `/payment/${p.id}`,
+  };
+
+  for (const s of subscriptions) {
+    webpush
+      .sendNotification(JSON.parse(s), JSON.stringify(payload))
+      .catch((e) => {
+        warn("sub failed", e.message);
+        db.sRem(`${user.id}:subscriptions`, s);
+      });
+  }
+
+  if (getConfig().mqtt) {
+    if (!mqtt.connected) await mqtt.reconnect();
+    mqtt.publish(
+      username,
+      `pay:${p.amount}:${p.tip}:${p.rate}:${p.created}:${p.id}:${p.memo}:${p.items}`,
+    );
+  }
+};
+
+export const nwcNotify = async (p) => {
+  try {
+    const user = await getUser(p.uid);
+    const pubkeys = await db.sMembers(`${user.id}:apps`);
+    if (pubkeys.length) {
+      const payment_hash = p.payment_hash || "";
+      for (const pubkey of pubkeys) {
+        const { notify } = await g(`app:${pubkey}`);
+        if (!notify) continue;
+
+        l("notifying", pubkey, p.type, p.amount);
+        const notification = {
+          type: p.amount > 0 ? "incoming" : "outgoing",
+          invoice: p.hash,
+          description: p.memo,
+          preimage: p.ref,
+          payment_hash: payment_hash,
+          amount: Math.abs(p.amount) * 1000,
+          fees_paid: (parseInt(p.fee) || 0) * 1000,
+          created_at: Math.round(p.created / 1000),
+          settled_at: Math.round(p.created / 1000),
+        };
+
+        const payload = JSON.stringify({
+          notification_type: p.amount > 0 ? "payment_received" : "payment_sent",
+          notification,
+        });
+
+        const content = await nip04.encrypt(serverSecret, pubkey, payload);
+
+        const unsigned = {
+          content,
+          tags: [["p", pubkey]],
+          kind: 23196,
+          created_at: Math.floor(Date.now() / 1000),
+        };
+
+        const event = finalizeEvent(unsigned, hexToBytes(serverSecret));
+
+        publish(event).catch(nada);
+      }
+    }
+  } catch (e) {
+    console.log(e);
+    warn("nwc notification failed", e.message);
+  }
+};
