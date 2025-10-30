@@ -2,7 +2,7 @@
 
 DGEN is a web-based bitcoin wallet powered by Breez SDK. You can use it to send and receive Bitcoin on-chain and Lightning payments using Breez SDK for Lightning operations.
 
-This repository contains the code for the API server. The frontend code is at <a href="https://github.com/dgentech/dgen-ui">https://github.com/dgentech/dgen-ui</a>
+This repository contains the code for the API server. The frontend code is at <a href="https://github.com/DGEN-Technologies/dgen-ui">https://github.com/DGEN-Technologies/dgen-ui</a>
 
 ## Requirements
 
@@ -14,7 +14,7 @@ This repository contains the code for the API server. The frontend code is at <a
 
 1. Clone the repository:
 ```bash
-git clone https://github.com/dgentech/dgen-server
+git clone https://github.com/DGEN-Technologies/dgen-server
 cd dgen-server
 ```
 
