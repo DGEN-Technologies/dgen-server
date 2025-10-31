@@ -6,8 +6,6 @@ import { err, l, warn } from "../lib/logging";
 import mqtt from "../lib/mqtt";
 import { getUserPayments, refreshUserState } from "../lib/state/hooks";
 import { PaymentType as PaymentTypeEnum, PaymentState, ListPaymentsRequest } from "../lib/payments/PaymentTracker";
-import { walletCache } from "../lib/cache/WalletCache";
-import { getPaymentCache } from "../lib/cache";
 import {
   credit,
   debit,
@@ -38,74 +36,13 @@ export default {
         return res.code(401).send({ error: "Unauthorized" });
       }
 
-      // Check cache first
-      const cached = await walletCache.getWalletInfo(user.id);
-      if (cached) {
-        return res.send({
-          id: user.id,
-          alias: "Breez Wallet",
-          version: "2.5.0",
-          blockheight: cached.blockHeight,
-          balanceSat: Number(cached.balanceSat),
-          pendingReceiveBalanceSat: Number(cached.pendingReceiveSat),
-          pendingSendBalanceSat: Number(cached.pendingSendSat),
-        });
-      }
-
-      
-      
-      // Browser SDK handles wallet info
-      let info = null;
-      try {
-        info = null; // Wallet info comes from browser SDK
-      } catch (recoveryError) {
-        console.error(`Failed to get wallet info for ${user.id}: ${recoveryError.message}`);
-        // Return cached data if available
-        const cached = await walletCache.getWalletInfo(user.id);
-        if (cached) {
-          return res.send({
-            id: user.id,
-            alias: "Breez Wallet",
-            version: "2.5.0",
-            blockheight: cached.blockHeight,
-            balanceSat: Number(cached.balanceSat),
-            pendingReceiveBalanceSat: Number(cached.pendingReceiveSat),
-            pendingSendBalanceSat: Number(cached.pendingSendSat),
-            error: "Using cached data"
-          });
-        }
-        res.send({ error: "Wallet temporarily unavailable. Please try again." });
-        return;
-      }
-
-      if (!info) {
-        res.send({ error: "Breez SDK not initialized" });
-        return;
-      }
-
-      const normalizedInfo = {
-        id: info.nodeId || "",
-        alias: "Breez Wallet",
-        version: "2.5.0",
-        blockheight: info.blockHeight || 0,
-        balanceSat: Math.round(Number(info.balance) || 0),
-        pendingReceiveSat: Math.round(
-          Number(info.pendingReceiveSat) || 0,
-        ),
-        pendingSendSat: Math.round(
-          Number(info.pendingSendSat) || 0,
-        ),
-      };
-
-      // Cache the result
-      await walletCache.setWalletInfo(user.id, {
-        balanceSat: BigInt(normalizedInfo.balanceSat),
-        pendingSendSat: BigInt(normalizedInfo.pendingSendSat),
-        pendingReceiveSat: BigInt(normalizedInfo.pendingReceiveSat),
-        blockHeight: normalizedInfo.blockheight
+      // Wallet info is managed entirely by Breez SDK client-side
+      // This endpoint is kept for compatibility but doesn't cache server-side
+      // The UI fetches wallet info directly from the browser SDK
+      res.send({
+        error: "Wallet info is managed by browser SDK",
+        message: "Use Breez SDK client-side for real-time wallet data"
       });
-
-      res.send(normalizedInfo);
     } catch (e) {
       res.send({ error: e.message });
     }
@@ -280,6 +217,7 @@ export default {
       payments = statePayments;
     } else {
       const range = !limit || start || end ? -1 : limit - 1;
+      // Only store internal/fund payments in Redis - SDK handles wallet payments
       payments = (await db.lRange(`${aid || id}:payments`, 0, range)) || [];
 
       payments = (
@@ -292,8 +230,8 @@ export default {
               return p;
             }
             if (p.created < start || p.created > end) return;
-            if (p.type === PaymentType.internal)
-              p.with = await getUser(p.ref, fields);
+            if (p.type === PaymentType.internal || p.type === PaymentType.fund)
+              p.with = await getUser(p.ref || p.uid, fields);
             return p;
           }),
         )
@@ -338,79 +276,19 @@ export default {
   },
 
   async get(req, res) {
-    const paymentCache = getPaymentCache();
-    
     try {
       const {
         params: { hash },
       } = req;
-      
-      console.log("Getting payment:", hash);
-      
-      // First try to get from cache (no auth required)
-      let p = await paymentCache.getPayment(hash);
-      if (p) {
-        console.log("Payment found in cache - returning");
-        // Ensure we have all required fields
-        if (!p.currency) p.currency = req.user?.currency || "USD";
-        if (!p.rate && p.rate !== 0) {
-          p.rate = await g("rate") || 100000;
-        }
-        res.send(p);
-        return;
+
+      // Get payment from database - only internal/fund payments are stored server-side
+      // SDK payments (Lightning/Bitcoin/Liquid) are tracked client-side via Breez SDK
+      let p = await getPayment(hash);
+
+      if (p?.type === PaymentType.internal || p?.type === PaymentType.fund) {
+        p.with = await getUser(p.ref || p.uid, fields);
       }
-      
-      console.log("Payment not in cache, checking database...");
-      
-      // Then try to get payment by hash/id from database
-      p = await getPayment(hash);
-      console.log("Payment from DB:", p ? "found" : "not found");
-      
-      
-      // If still not found and it looks like a BOLT11 invoice, try to find it
-      if (!p && (hash.startsWith('lnbc') || hash.startsWith('lntb') || hash.startsWith('lnbcrt'))) {
-        // Try to find the invoice ID by BOLT11 text
-        const invoiceId = await g(`invoice:bolt11:${hash}`);
-        if (invoiceId) {
-          // Get the actual invoice data
-          const invoice = await g(`invoice:${invoiceId}`);
-          if (invoice) {
-            // Try to find payment by invoice hash
-            if (invoice.hash) {
-              p = await getPayment(invoice.hash);
-            }
-            // If still not found, try by payment hash
-            if (!p && invoice.paymentHash) {
-              p = await getPayment(invoice.paymentHash);
-            }
-            // If still not found, return invoice info with pending status
-            if (!p) {
-              p = {
-                id: invoice.id,
-                hash: invoice.paymentHash || invoice.hash,
-                amount: invoice.amount,
-                type: invoice.type || PaymentType.lightning,
-                status: 'pending',
-                created: invoice.created,
-                memo: invoice.memo,
-                text: hash,
-                pending: invoice.pending || 0,
-                received: invoice.received || 0
-              };
-            }
-          }
-        }
-      }
-      
-      if (p?.type === PaymentType.internal)
-        p.with = await getUser(p.ref, fields);
-      if (p?.type === PaymentType.fund) p.with = await getUser(p.uid, fields);
-      
-      // Cache the payment if found
-      if (p) {
-        await paymentCache.storePayment(p, req.user?.id);
-      }
-      
+
       res.send(p || null);
     } catch (e) {
       console.log(e);

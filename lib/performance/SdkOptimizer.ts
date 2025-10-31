@@ -1,5 +1,3 @@
-import { walletCache } from "../cache/WalletCache";
-
 interface SdkMetrics {
   connectTime: number;
   disconnectTime: number;
@@ -49,10 +47,6 @@ export class SdkOptimizer {
   shouldReconnect(): boolean {
     const inactiveTime = Date.now() - this.metrics.lastActivity;
     return inactiveTime > 600000; // 10 minutes
-  }
-
-  async invalidateUserCache(userId: string): Promise<void> {
-    await walletCache.invalidateUser(userId);
   }
 
   getMetrics(): SdkMetrics {

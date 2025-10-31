@@ -30,46 +30,11 @@ export default {
   async me(req, res) {
     const { user } = req;
     try {
-      // Check if wallet is initialized before trying Breez SDK operations
-      const walletData = await db.hGetAll(`wallet:${user.id}`) || {};
-      const isWalletInitialized = walletData.initialized === "true";
-      
-      if (isWalletInitialized) {
-        // DON'T sync payment history on every /me request - this causes 2-4 second delays!
-        // The SDK pool already syncs automatically via events and WebSocket connections
-        // Just get the cached balance which is kept up-to-date by the SDK event handlers
-        
-        try {
-          // Try to get cached wallet info first (fast path)
-          const { walletCache } = await import("../lib/cache/WalletCache");
-          const cached = await walletCache.getWalletInfo(user.id);
-          
-          if (cached) {
-            // Use cached data (instant response) - convert BigInt to number
-            user.balance = Number(cached.balanceSat);
-            user.pendingSend = Number(cached.pendingSendSat);
-            user.pendingReceive = Number(cached.pendingReceiveSat);
-          } else {
-            // No cache available, use stored balance
-            // In production, wallet info would come from Breez SDK
-            // For now, just use stored values
-            user.balance = await g(`balance:${user.id}`) || 0;
-            user.pendingSend = 0;
-            user.pendingReceive = 0;
-          }
-        } catch (e) {
-          // If anything fails, use stored balance
-          console.log("Failed to get wallet info for user", user.id, ":", e.message);
-          user.balance = await g(`balance:${user.id}`) || 0;
-          user.pendingSend = 0;
-          user.pendingReceive = 0;
-        }
-      } else {
-        // Wallet not initialized - use stored balance or default to 0
-        user.balance = await g(`balance:${user.id}`) || 0;
-        user.pendingSend = 0;
-        user.pendingReceive = 0;
-      }
+      // Get dgen internal account balance (for fund transfers, not wallet)
+      // Wallet info is managed by Breez SDK client-side
+      user.balance = await g(`balance:${user.id}`) || 0;
+      user.pendingSend = 0;
+      user.pendingReceive = 0;
       
       // Get locked balance from archive
       try {

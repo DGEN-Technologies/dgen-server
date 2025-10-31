@@ -157,19 +157,13 @@ export const debit = async ({
     created: Date.now(),
   };
 
-  await s(`payment:${hash}`, id);
-  await s(`payment:${id}`, p);
-  await db
-    .multi()
-    .lPush("payments", id)
-    .lPush(`${aid || uid}:payments`, id)
-    .set(`${aid || uid}:payments:last`, p.created)
-    .exec();
+  // Only store payment records for internal fund transfers (not Breez SDK payments)
+  // Lightning/Bitcoin/Liquid payments are tracked by Breez SDK client-side
+  if (type === PaymentType.internal || type === PaymentType.fund) {
+    await s(`payment:${id}`, p);
+  }
 
   l(user.username, "sent", type, amount);
-  //emit(user.id, "payment", p);
-  // if (![PaymentType.lightning, PaymentType.bolt12].includes(type))
-  //   // nwcNotify(p); // NWC disabled // NWC disabled
 
   return p;
 };
@@ -260,9 +254,6 @@ export const credit = async ({
     const [txid, vout] = ref.split(":").slice(-2);
     p.confirmed = false;
     balanceKey = "pending";
-    await s(`payment:${txid}:${vout}`, id);
-  } else {
-    await s(`payment:${hash}`, id);
   }
 
   const m = await db.multi();
@@ -279,9 +270,14 @@ export const credit = async ({
       Math.round(amount * getConfig().fee[creditType]),
     );
 
+  // Only store payment records for internal/fund transfers (not Breez SDK payments)
+  // Lightning/Bitcoin/Liquid payments are tracked by Breez SDK client-side
+  if (type === PaymentType.internal || type === PaymentType.fund) {
+    m.set(`payment:${p.id}`, JSON.stringify(p))
+      .lPush(`${aid || uid}:payments`, p.id);
+  }
+
   m.set(`invoice:${inv.id}`, JSON.stringify(inv))
-    .set(`payment:${p.id}`, JSON.stringify(p))
-    .lPush(`${aid || uid}:payments`, p.id)
     .incrBy(`${balanceKey}:${aid || uid}`, amount)
     .set(`${aid || uid}:payments:last`, p.created)
     .exec();

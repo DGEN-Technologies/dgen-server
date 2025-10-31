@@ -137,47 +137,11 @@ export const generate = async ({ invoice, user }) => {
     webhook,
   };
 
-  if (type === "liquid") {
-    // Liquid confidential addresses handled in browser
-    const unconfidential = hash;
-    await s(`invoice:${unconfidential}`, id);
-  }
-
-  await s(`invoice:${hash}`, id);
+  // Store invoice metadata for dgen-specific tracking only
+  // Lightning/Bitcoin/Liquid invoices generated and tracked by browser SDK
   await s(`invoice:${id}`, invoice);
   await db.lPush(`${aid}:invoices`, id);
   await db.lPush(`${user.id}:invoices`, id);
-  
-  // For Lightning invoices, store multiple lookup keys
-  if (type === PaymentType.lightning || type === PaymentType.bolt12) {
-    // Store by BOLT11 text itself
-    if (text) {
-      await s(`invoice:bolt11:${text}`, id);
-      // Also store by the invoice hash (which is the BOLT11 for Lightning)
-      if (hash !== text) {
-        await s(`invoice:${text}`, id);
-      }
-    }
-    
-    // Store by payment hash if available
-    if (paymentHash) {
-      await s(`invoice:paymenthash:${paymentHash}`, id);
-      await s(`paymenthash:${paymentHash}`, id); // Simple lookup by payment hash
-      // Use console.log instead of getLogger for now
-      console.log(`Stored Lightning invoice ${id} with payment hash: ${paymentHash}`);
-    } else {
-      console.log(`Warning: Lightning invoice ${id} created without payment hash`);
-    }
-    
-    // Also store the invoice details for quick access
-    await s(`invoice:details:${id}`, {
-      bolt11: text,
-      paymentHash,
-      amount,
-      created: Date.now(),
-      status: 'pending'
-    });
-  }
 
   if (request_id) {
     const request = await g(`request:${request_id}`);
