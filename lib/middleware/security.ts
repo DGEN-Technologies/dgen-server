@@ -318,6 +318,6 @@ export class CSRFProtection {
 }
 
 // Singleton instances
-export const loginRateLimiter = new EnhancedRateLimiter(5, 60000, 900000); // 5 attempts per minute, 15min lockout
+export const loginRateLimiter = new EnhancedRateLimiter(10, 60000, 300000); // 10 attempts per minute, 5min lockout
 export const apiRateLimiter = new EnhancedRateLimiter(30, 60000, 300000); // 30 requests per minute, 5min lockout
 export const csrfProtection = new CSRFProtection();

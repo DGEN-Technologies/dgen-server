@@ -157,7 +157,7 @@ app.register(fastifyRateLimit, {
     const matches = sensitiveEndpoints.some(endpoint => url.includes(endpoint));
     return !matches;
   },
-  max: process.env.NODE_ENV === 'development' ? 50 : 30, // Higher limit in dev, generous in prod
+  max: process.env.NODE_ENV === 'development' ? 150 : 100, // Higher limit in dev, generous in prod for active users
   timeWindow: process.env.NODE_ENV === 'development' ? 60000 : 120000, // 1 min in dev, 2 min in prod
   keyGenerator: (req) => {
     // Use user ID if authenticated, otherwise use IP
@@ -193,35 +193,9 @@ app.register(fastifyRateLimit, {
   },
 });
 
-app.register(fastifyRateLimit, {
-  allowList: (req) => {
-    const url = req.raw.url || "";
-    const authEndpoints = ["/auth/login", "/auth/register"];
-    return !authEndpoints.some(endpoint => url.includes(endpoint));
-  },
-  max: 10,
-  timeWindow: 900000,
-  keyGenerator: (req) => {
-    const ip = (req.headers["cf-connecting-ip"] as string) || req.ip;
-    return ip;
-  },
-  errorResponseBuilder: (req) => {
-    const ip = (req.headers["cf-connecting-ip"] as string) || req.ip;
-    const ua = req.headers["user-agent"] || "unknown";
-    reqLogger.warn({
-      event: "security_auth_rate_limit_exceeded",
-      ip,
-      userAgent: ua,
-      url: req.raw.url,
-      timestamp: new Date().toISOString()
-    });
-    return {
-      statusCode: 429,
-      error: "Too Many Requests",
-      message: "Authentication rate limit exceeded",
-    };
-  },
-});
+// Auth endpoints (/login, /register) are handled by the loginRateLimiter in routes/users.ts
+// which provides 10 attempts per minute with a 5-minute lockout
+// No need for an additional rate limiter here
 
 // WebSocket handling is now done directly through WebSocketManager
 // See lib/websocket/WebSocketManager.ts

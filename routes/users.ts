@@ -146,6 +146,10 @@ export default {
       const payload = { id: user.id };
       const token = jwt.sign(payload, config.jwt);
 
+      // Reset rate limiter for this IP after successful registration
+      // This allows the auto-login to succeed without counting against rate limits
+      loginRateLimiter.reset(ip);
+
       l("registered new user", user.username);
 
       res.send({ ...pick(user, whitelist), sk: user.sk, token });

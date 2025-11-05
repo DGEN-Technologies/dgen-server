@@ -42,7 +42,7 @@ export class WebSocketManager extends EventEmitter {
   private readonly HEARTBEAT_INTERVAL = 30000; // 30 seconds
   private readonly CONNECTION_TIMEOUT = 120000; // 2 minutes
   private readonly CLEANUP_INTERVAL = 60000; // 1 minute
-  private readonly MAX_MESSAGES_PER_MINUTE = 60;
+  private readonly MAX_MESSAGES_PER_MINUTE = 120; // Increased for real-time wallet updates
   
   private constructor() {
     super();
