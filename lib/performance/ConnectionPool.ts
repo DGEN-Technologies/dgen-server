@@ -23,9 +23,16 @@ export class ConnectionPool {
   }
 
   addConnection(id: string): boolean {
+    // Aggressive cleanup if approaching limit
+    if (this.connections.size >= this.maxConnections * 0.8) {
+      this.aggressiveCleanup();
+    }
+
     if (this.connections.size >= this.maxConnections) {
-      this.cleanup();
+      // Try one more aggressive cleanup
+      this.aggressiveCleanup();
       if (this.connections.size >= this.maxConnections) {
+        console.error(`Connection pool full: ${this.connections.size}/${this.maxConnections}`);
         return false;
       }
     }
@@ -36,6 +43,28 @@ export class ConnectionPool {
       isActive: true
     });
     return true;
+  }
+
+  private aggressiveCleanup(): void {
+    const now = Date.now();
+    const toRemove: string[] = [];
+
+    // More aggressive timeout during high load
+    const timeout = this.connections.size > this.maxConnections * 0.8
+      ? 60000  // 1 minute during high load
+      : this.idleTimeout;
+
+    for (const [id, conn] of this.connections) {
+      if (now - conn.lastActivity > timeout || !conn.isActive) {
+        toRemove.push(id);
+      }
+    }
+
+    toRemove.forEach(id => this.connections.delete(id));
+
+    if (toRemove.length > 0) {
+      console.log(`ConnectionPool: Aggressive cleanup removed ${toRemove.length} connections`);
+    }
   }
 
   updateActivity(id: string): void {

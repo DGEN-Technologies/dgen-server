@@ -5,6 +5,7 @@ import { redis } from '../lib/redis';
 import { AlertManager } from '../lib/monitoring/AlertManager';
 import { MetricsCollector } from '../lib/monitoring/MetricsCollector';
 import { websocketManager } from '../lib/websocket/WebSocketManager';
+import { connectionPool } from '../lib/performance/ConnectionPool';
 
 interface HealthCheckComponent {
   name: string;
@@ -93,16 +94,27 @@ async function checkWebSocket(): Promise<HealthCheckComponent> {
   const start = Date.now();
   try {
     const stats = websocketManager.getStats();
-    const isHealthy = stats.totalConnections >= 0;
+    const poolStats = connectionPool.getStats();
+
+    // Check for connection pool saturation
+    const poolUtilization = (poolStats.total / poolStats.maxConnections) * 100;
+    const isHealthy = stats.totalConnections >= 0 && poolUtilization < 90;
+    const isDegraded = poolUtilization >= 80 && poolUtilization < 90;
 
     return {
       name: 'websocket',
-      status: isHealthy ? 'healthy' : 'unhealthy',
+      status: isHealthy ? 'healthy' : isDegraded ? 'degraded' : 'unhealthy',
       responseTime: Date.now() - start,
       metadata: {
         totalConnections: stats.totalConnections,
         authenticatedConnections: stats.authenticatedConnections,
-        uniqueUsers: stats.uniqueUsers
+        uniqueUsers: stats.uniqueUsers,
+        connectionPool: {
+          total: poolStats.total,
+          active: poolStats.active,
+          maxConnections: poolStats.maxConnections,
+          utilization: poolUtilization.toFixed(2) + '%'
+        }
       }
     };
   } catch (error) {

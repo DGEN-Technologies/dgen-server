@@ -35,7 +35,14 @@ export class WebSocketManager extends EventEmitter {
   private heartbeatInterval: NodeJS.Timeout | null = null;
   private cleanupInterval: NodeJS.Timeout | null = null;
   private isRegistered = false;
-  
+
+  // Add logger property to prevent runtime crashes
+  private logger = {
+    error: err,
+    warn: warn,
+    info: l
+  };
+
   // Production configuration
   private readonly MAX_CONNECTIONS_PER_USER = 3;
   private readonly MAX_MESSAGE_SIZE = 1048576; // 1MB
@@ -65,21 +72,100 @@ export class WebSocketManager extends EventEmitter {
   }
 
   private setupIntervals(): void {
-    // Heartbeat interval
+    // Heartbeat interval - more frequent checks during high load
     this.heartbeatInterval = setInterval(() => {
+      const connectionCount = this.connections.size;
+
+      // Aggressive cleanup if connection count is high
+      if (connectionCount > 500) {
+        this.logger.warn(`High connection count: ${connectionCount}, performing aggressive cleanup`);
+        this.aggressiveCleanup();
+      }
+
       this.connections.forEach((connection) => {
         if (Date.now() - connection.lastActivity > this.CONNECTION_TIMEOUT) {
           this.handleDisconnect(connection.id);
-        } else {
-          connection.ws.ping();
+        } else if (connection.ws.readyState === WebSocket.OPEN) {
+          try {
+            connection.ws.ping();
+          } catch (e) {
+            // Connection might be dead, remove it
+            this.handleDisconnect(connection.id);
+          }
         }
       });
     }, this.HEARTBEAT_INTERVAL);
 
-    // Cleanup interval
+    // Cleanup interval - more frequent during high load
     this.cleanupInterval = setInterval(() => {
       this.cleanup();
+
+      // Additional cleanup if we detect potential issues
+      if (this.connections.size > 100) {
+        this.cleanupZombieConnections();
+      }
     }, this.CLEANUP_INTERVAL);
+  }
+
+  private aggressiveCleanup(): void {
+    const now = Date.now();
+    const toRemove: string[] = [];
+
+    this.connections.forEach((conn, id) => {
+      // Remove any pending connections older than 3 seconds
+      if (conn.userId === 'pending' && now - conn.createdAt > 3000) {
+        toRemove.push(id);
+      }
+      // Remove any inactive connections
+      if (now - conn.lastActivity > 60000) { // 1 minute inactive
+        toRemove.push(id);
+      }
+      // Remove any connections with closed WebSocket
+      if (conn.ws.readyState !== WebSocket.OPEN) {
+        toRemove.push(id);
+      }
+    });
+
+    toRemove.forEach(id => {
+      this.handleDisconnect(id);
+    });
+
+    if (toRemove.length > 0) {
+      this.logger.info(`Aggressive cleanup removed ${toRemove.length} connections`);
+    }
+  }
+
+  private cleanupZombieConnections(): void {
+    const toRemove: string[] = [];
+
+    this.connections.forEach((conn, id) => {
+      // Check if WebSocket is actually alive
+      if (conn.ws.readyState !== WebSocket.OPEN &&
+          conn.ws.readyState !== WebSocket.CONNECTING) {
+        toRemove.push(id);
+      }
+    });
+
+    toRemove.forEach(id => {
+      const conn = this.connections.get(id);
+      if (conn) {
+        this.connections.delete(id);
+        // Clean up user connections
+        if (conn.userId && conn.userId !== 'pending') {
+          const userConns = this.userConnections.get(conn.userId);
+          if (userConns) {
+            userConns.delete(id);
+            if (userConns.size === 0) {
+              this.userConnections.delete(conn.userId);
+            }
+          }
+        }
+      }
+    });
+
+    if (toRemove.length > 0) {
+      this.logger.info(`Zombie cleanup removed ${toRemove.length} dead connections`);
+    }
   }
 
   public async register(app: FastifyInstance): Promise<void> {
@@ -170,7 +256,7 @@ export class WebSocketManager extends EventEmitter {
     // Store as pending connection
     this.connections.set(connectionId, pendingConnection);
     
-    // Set authentication timeout
+    // Set authentication timeout - reduced to prevent zombie connections
     const authTimeout = setTimeout(() => {
       const conn = this.connections.get(connectionId);
       if (conn && conn.userId === 'pending') {
@@ -184,8 +270,18 @@ export class WebSocketManager extends EventEmitter {
           this.logger.error('Error closing WebSocket on timeout:', e);
         }
         this.connections.delete(connectionId);
+        // Clean up user connections if exists
+        if (conn.userId && conn.userId !== 'pending') {
+          const userConns = this.userConnections.get(conn.userId);
+          if (userConns) {
+            userConns.delete(connectionId);
+            if (userConns.size === 0) {
+              this.userConnections.delete(conn.userId);
+            }
+          }
+        }
       }
-    }, 10000); // 10 second timeout for authentication
+    }, 3000); // Reduced to 3 seconds to prevent zombie connection accumulation
     
     // Handle incoming messages - support both Bun and Node.js WebSocket APIs
     const handleMessage = async (data: Buffer | string) => {
