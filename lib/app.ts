@@ -134,8 +134,8 @@ app.register(fastifyRateLimit, {
   allowList: (req) => {
     return req.raw.url?.includes("public");
   },
-  max: 500,
-  timeWindow: 60000,
+  max: 2000,
+  timeWindow: 10000,
   keyGenerator: (req) => {
     const ip = (req.headers["cf-connecting-ip"] as string) || req.ip;
     const ua = req.headers["user-agent"] || "unknown-ua";
@@ -145,7 +145,7 @@ app.register(fastifyRateLimit, {
     return {
       statusCode: 429,
       error: "Too Many Requests",
-      message: "Rate limit exceeded, retry in 1 minute",
+      message: "Rate limit exceeded, retry in 10 seconds",
     };
   },
 });
@@ -157,10 +157,9 @@ app.register(fastifyRateLimit, {
     const matches = sensitiveEndpoints.some(endpoint => url.includes(endpoint));
     return !matches;
   },
-  max: process.env.NODE_ENV === 'development' ? 150 : 100, // Higher limit in dev, generous in prod for active users
-  timeWindow: process.env.NODE_ENV === 'development' ? 60000 : 120000, // 1 min in dev, 2 min in prod
+  max: process.env.NODE_ENV === 'development' ? 300 : 200,
+  timeWindow: process.env.NODE_ENV === 'development' ? 60000 : 120000,
   keyGenerator: (req) => {
-    // Use user ID if authenticated, otherwise use IP
     const userId = req.user?.id;
     if (userId) {
       return `user:${userId}`;
@@ -172,7 +171,7 @@ app.register(fastifyRateLimit, {
     const ip = (req.headers["cf-connecting-ip"] as string) || req.ip;
     const ua = req.headers["user-agent"] || "unknown";
     const userId = req.user?.id || "anonymous";
-    
+
     app.log.warn({
       event: "security_rate_limit_exceeded",
       userId,
@@ -185,10 +184,10 @@ app.register(fastifyRateLimit, {
     return {
       statusCode: 429,
       error: "Too Many Requests",
-      message: process.env.NODE_ENV === 'development' 
+      message: process.env.NODE_ENV === 'development'
         ? "Rate limit exceeded. Please wait 1 minute before trying again."
         : "Rate limit exceeded for security. Please wait 2 minutes before trying again.",
-      retryAfter: process.env.NODE_ENV === 'development' ? 60 : 120, // seconds
+      retryAfter: process.env.NODE_ENV === 'development' ? 60 : 120,
     };
   },
 });

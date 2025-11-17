@@ -43,14 +43,13 @@ export class WebSocketManager extends EventEmitter {
     info: l
   };
 
-  // Production configuration
   private readonly MAX_CONNECTIONS_PER_USER = 3;
   private readonly MAX_MESSAGE_SIZE = 1048576; // 1MB
   private readonly HEARTBEAT_INTERVAL = 30000; // 30 seconds
   private readonly CONNECTION_TIMEOUT = 120000; // 2 minutes
   private readonly CLEANUP_INTERVAL = 60000; // 1 minute
-  private readonly MAX_MESSAGES_PER_MINUTE = 120; // Increased for real-time wallet updates
-  
+  private readonly MAX_MESSAGES_PER_MINUTE = 120;
+
   private constructor() {
     super();
     this.rateLimiter = new RateLimiter({
@@ -58,7 +57,7 @@ export class WebSocketManager extends EventEmitter {
       maxRequests: this.MAX_MESSAGES_PER_MINUTE
     });
     this.connectionPool = new ConnectionPool({
-      maxConnections: 1000,
+      maxConnections: 10000,
       maxConnectionsPerIP: 10
     });
     this.setupIntervals();
@@ -72,13 +71,13 @@ export class WebSocketManager extends EventEmitter {
   }
 
   private setupIntervals(): void {
-    // Heartbeat interval - more frequent checks during high load
     this.heartbeatInterval = setInterval(() => {
       const connectionCount = this.connections.size;
+      const poolStats = this.connectionPool.getStats();
+      const highLoadThreshold = poolStats.maxConnections * 0.5;
 
-      // Aggressive cleanup if connection count is high
-      if (connectionCount > 500) {
-        this.logger.warn(`High connection count: ${connectionCount}, performing aggressive cleanup`);
+      if (connectionCount > highLoadThreshold) {
+        this.logger.warn(`High connection count: ${connectionCount}/${poolStats.maxConnections}, performing aggressive cleanup`);
         this.aggressiveCleanup();
       }
 
@@ -89,19 +88,19 @@ export class WebSocketManager extends EventEmitter {
           try {
             connection.ws.ping();
           } catch (e) {
-            // Connection might be dead, remove it
             this.handleDisconnect(connection.id);
           }
         }
       });
     }, this.HEARTBEAT_INTERVAL);
 
-    // Cleanup interval - more frequent during high load
     this.cleanupInterval = setInterval(() => {
       this.cleanup();
 
-      // Additional cleanup if we detect potential issues
-      if (this.connections.size > 100) {
+      const poolStats = this.connectionPool.getStats();
+      const zombieCheckThreshold = poolStats.maxConnections * 0.1;
+
+      if (this.connections.size > zombieCheckThreshold) {
         this.cleanupZombieConnections();
       }
     }, this.CLEANUP_INTERVAL);

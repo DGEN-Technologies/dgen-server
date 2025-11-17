@@ -4,21 +4,30 @@ interface Connection {
   isActive: boolean;
 }
 
+interface ConnectionPoolConfig {
+  maxConnections?: number;
+  maxConnectionsPerIP?: number;
+  idleTimeout?: number;
+}
+
 export class ConnectionPool {
   private static instance: ConnectionPool;
   private connections = new Map<string, Connection>();
-  private readonly maxConnections = parseInt(process.env.MAX_WEBSOCKET_CONNECTIONS || "300");
-  private readonly idleTimeout = 300000; // 5 minutes
+  private readonly maxConnections: number;
+  private readonly idleTimeout: number;
   private cleanupInterval: NodeJS.Timeout;
 
-  static getInstance(): ConnectionPool {
+  static getInstance(config?: ConnectionPoolConfig): ConnectionPool {
     if (!ConnectionPool.instance) {
-      ConnectionPool.instance = new ConnectionPool();
+      ConnectionPool.instance = new ConnectionPool(config);
     }
     return ConnectionPool.instance;
   }
 
-  private constructor() {
+  private constructor(config?: ConnectionPoolConfig) {
+    this.maxConnections = config?.maxConnections
+      ?? parseInt(process.env.MAX_WEBSOCKET_CONNECTIONS || "10000");
+    this.idleTimeout = config?.idleTimeout ?? 300000; // 5 minutes
     this.cleanupInterval = setInterval(() => this.cleanup(), 60000);
   }
 

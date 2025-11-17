@@ -54,7 +54,7 @@ export default {
     throw new Error("Production requires either URL, RAILWAY_PUBLIC_DOMAIN, or HTTPS=true environment variable");
   })(),
   redis: {
-    maxConnections: parseInt(process.env.REDIS_MAX_CONNECTIONS || "10"),
+    maxConnections: parseInt(process.env.REDIS_MAX_CONNECTIONS || "50"),
     connectionTimeout: parseInt(process.env.REDIS_CONNECTION_TIMEOUT || "5000"),
     lazyConnect: true,
     retryDelayOnFailover: 100,
