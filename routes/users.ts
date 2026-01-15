@@ -2,7 +2,7 @@ import { createReadStream } from "node:fs";
 import { appendFile, unlink } from "node:fs/promises";
 import config from "../config";
 import { requirePin } from "../lib/auth";
-import { db, g, ga, s } from "../lib/db";
+import { db, g, ga, s, safeDb } from "../lib/db";
 import { err, l, warn } from "../lib/logging";
 import { mail, templates } from "../lib/mail";
 import { getNostrUser, getProfile } from "../lib/nostr";
@@ -45,12 +45,12 @@ export default {
       }
 
       if (user.locked) {
-        const blacklisted = await db.sIsMember(
+        const blacklisted = await safeDb.sIsMember(
           "blacklist",
           user?.username?.toLowerCase().trim(),
         );
 
-        const whitelisted = await db.sIsMember(
+        const whitelisted = await safeDb.sIsMember(
           "whitelist",
           user?.username?.toLowerCase().trim(),
         );
@@ -452,7 +452,7 @@ export default {
 
       const { username } = user;
       if (
-        await db.sIsMember(
+        await safeDb.sIsMember(
           "compromised",
           username.replace(/\s/g, "").toLowerCase(),
         )
@@ -477,7 +477,7 @@ export default {
   async subscriptions(req, res) {
     try {
       const { user } = req;
-      const subscriptions = await db.sMembers(`${user.id}:subscriptions`);
+      const subscriptions = await safeDb.sMembers(`${user.id}:subscriptions`);
       res.send(subscriptions);
     } catch (e) {
       bail(res, e.message);
@@ -488,7 +488,7 @@ export default {
     try {
       const { subscription } = req.body;
       const { id } = req.user;
-      await db.sAdd(`${id}:subscriptions`, JSON.stringify(subscription));
+      await safeDb.sAdd(`${id}:subscriptions`, JSON.stringify(subscription));
       res.send(subscription);
     } catch (e) {
       console.error("Error:", e.message);
@@ -500,7 +500,7 @@ export default {
     try {
       const { subscription } = req.body;
       const { id } = req.user;
-      await db.sRem(`${id}:subscriptions`, JSON.stringify(subscription));
+      await safeDb.sRem(`${id}:subscriptions`, JSON.stringify(subscription));
       res.send(subscription);
     } catch (e) {
       console.error("Error:", e.message);
@@ -551,15 +551,15 @@ export default {
     const { params, user } = req;
     const { id } = user;
     const lastlen = (await g(`${id}:lastlen`)) || 0;
-    const len = await db.lLen(`${id}:payments`);
+    const len = await safeDb.lLen(`${id}:payments`);
     const payments =
-      (await db.lRange(`${id}:payments`, 0, len - lastlen)) || [];
-    await db.set(`${id}:lastlen`, len);
+      (await safeDb.lRange(`${id}:payments`, 0, len - lastlen)) || [];
+    await safeDb.set(`${id}:lastlen`, String(len));
 
     let contacts = (await g(`${id}:contacts`)) || [];
-    const pins = await db.sMembers(`${id}:pins`);
+    const pins = await safeDb.sMembers(`${id}:pins`);
     const pinsArray = Array.isArray(pins) ? pins : Array.from(pins);
-    const trust = await db.sMembers(`${id}:trust`);
+    const trust = await safeDb.sMembers(`${id}:trust`);
     const trustArray = Array.isArray(trust) ? trust : Array.from(trust);
 
     for (const { ref } of (
@@ -847,7 +847,7 @@ export default {
 
   async apps(req, res) {
     const { user } = req;
-    const pubkeys = await db.sMembers(`${user.id}:apps`);
+    const pubkeys = await safeDb.sMembers(`${user.id}:apps`);
     const pubkeysArray = Array.isArray(pubkeys) ? pubkeys : Array.from(pubkeys);
     const apps = await Promise.all(pubkeysArray.map((p) => g(`app:${p}`)));
 
@@ -912,7 +912,7 @@ export default {
       if (!app?.created) app.created = Date.now();
 
       await s(`app:${pubkey}`, app);
-      await db.sAdd(`${uid}:apps`, pubkey);
+      await safeDb.sAdd(`${uid}:apps`, pubkey);
 
       res.send({});
     } catch (e) {
@@ -928,8 +928,8 @@ export default {
       const { pubkey } = req.body;
       const app = await g(pubkey);
       if (app && uid !== app.uid) fail("Unauthorized");
-      await db.sRem(`${uid}:apps`, pubkey);
-      await db.del(`app:${pubkey}`);
+      await safeDb.sRem(`${uid}:apps`, pubkey);
+      await safeDb.del(`app:${pubkey}`);
       res.send({});
     } catch (e) {
       console.error("Error:", e.message);
@@ -940,33 +940,33 @@ export default {
   async addPin(req, res) {
     const { id: uid } = req.user;
     const { id } = req.body;
-    await db.sAdd(`${uid}:pins`, id);
+    await safeDb.sAdd(`${uid}:pins`, id);
     res.send({});
   },
 
   async deletePin(req, res) {
     const { id: uid } = req.user;
     const { id } = req.body;
-    await db.sRem(`${uid}:pins`, id);
+    await safeDb.sRem(`${uid}:pins`, id);
     res.send({});
   },
 
   async trust(req, res) {
     const { id } = req.user;
-    res.send(await db.sMembers(`${id}:trust`));
+    res.send(await safeDb.sMembers(`${id}:trust`));
   },
 
   async addTrust(req, res) {
     const { id: uid } = req.user;
     const { id } = req.body;
-    await db.sAdd(`${uid}:trust`, id);
+    await safeDb.sAdd(`${uid}:trust`, id);
     res.send({});
   },
 
   async deleteTrust(req, res) {
     const { id: uid } = req.user;
     const { id } = req.body;
-    await db.sRem(`${uid}:trust`, id);
+    await safeDb.sRem(`${uid}:trust`, id);
     res.send({});
   },
 

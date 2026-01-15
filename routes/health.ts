@@ -1,7 +1,6 @@
 import { FastifyRequest, FastifyReply } from 'fastify';
 import { initializeServices } from '../lib/services';
-import { db } from '../lib/db';
-import { redis } from '../lib/redis';
+import { safeDb } from '../lib/db';
 import { AlertManager } from '../lib/monitoring/AlertManager';
 import { MetricsCollector } from '../lib/monitoring/MetricsCollector';
 import { websocketManager } from '../lib/websocket/WebSocketManager';
@@ -35,7 +34,7 @@ const startTime = Date.now();
 async function checkDatabase(): Promise<HealthCheckComponent> {
   const start = Date.now();
   try {
-    await db.ping();
+    await safeDb.ping();
     return {
       name: 'database',
       status: 'healthy',
@@ -54,11 +53,11 @@ async function checkDatabase(): Promise<HealthCheckComponent> {
 async function checkRedis(): Promise<HealthCheckComponent> {
   const start = Date.now();
   try {
-    await redis.ping();
-    const info = await redis.info('clients');
+    await safeDb.ping();
+    const info = await safeDb.info('clients');
     const infoStr = typeof info === 'string' ? info : String(info);
     const connectedClients = parseInt(infoStr.match(/connected_clients:(\d+)/)?.[1] || '0');
-    
+
     return {
       name: 'redis',
       status: 'healthy',
@@ -98,12 +97,17 @@ async function checkWebSocket(): Promise<HealthCheckComponent> {
 
     // Check for connection pool saturation
     const poolUtilization = (poolStats.total / poolStats.maxConnections) * 100;
-    const isHealthy = stats.totalConnections >= 0 && poolUtilization < 90;
-    const isDegraded = poolUtilization >= 80 && poolUtilization < 90;
+
+    function getStatus(): 'healthy' | 'degraded' | 'unhealthy' {
+      const isHealthy = stats.totalConnections >= 0 && poolUtilization < 90;
+      if (isHealthy) return 'healthy';
+      if (poolUtilization >= 80 && poolUtilization < 90) return 'degraded';
+      return 'unhealthy';
+    }
 
     return {
       name: 'websocket',
-      status: isHealthy ? 'healthy' : isDegraded ? 'degraded' : 'unhealthy',
+      status: getStatus(),
       responseTime: Date.now() - start,
       metadata: {
         totalConnections: stats.totalConnections,
@@ -135,11 +139,12 @@ export async function health(req: FastifyRequest, reply: FastifyReply) {
     checkWebSocket()
   ]);
   
-  const overallStatus = components.every(c => c.status === 'healthy') 
-    ? 'healthy' 
-    : components.some(c => c.status === 'unhealthy')
-    ? 'unhealthy'
-    : 'degraded';
+  function determineOverallStatus(): 'healthy' | 'unhealthy' | 'degraded' {
+    if (components.every(c => c.status === 'healthy')) return 'healthy';
+    if (components.some(c => c.status === 'unhealthy')) return 'unhealthy';
+    return 'degraded';
+  }
+  const overallStatus = determineOverallStatus();
 
   const metricsCollector = MetricsCollector.getInstance();
   const injector = initializeServices();
@@ -183,7 +188,7 @@ export async function health(req: FastifyRequest, reply: FastifyReply) {
     paymentStats
   };
   
-  const statusCode = overallStatus === 'healthy' ? 200 : overallStatus === 'degraded' ? 503 : 503;
+  const statusCode = overallStatus === 'healthy' ? 200 : 503;
   reply.code(statusCode).send(response);
 }
 
