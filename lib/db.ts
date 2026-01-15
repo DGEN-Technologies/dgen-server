@@ -5,6 +5,16 @@ import { warn, err } from "./logging";
 
 const config = getConfig();
 
+// Redis operation timeout to prevent hanging requests when Redis is disconnected
+const REDIS_TIMEOUT_MS = 5000;
+
+function withTimeout<T>(promise: Promise<T>, operation: string): Promise<T> {
+  const timeout = new Promise<never>((_, reject) =>
+    setTimeout(() => reject(new Error(`Redis timeout: ${operation}`)), REDIS_TIMEOUT_MS)
+  );
+  return Promise.race([promise, timeout]);
+}
+
 const DEBIT = `
 local balanceKey = KEYS[1]
 local creditKey = KEYS[2]
@@ -98,27 +108,22 @@ export const arc2 = createClient({
   ...redisOptions
 });
 
-async function dbReconnect() {
-  try {
-    if (!db.isOpen) {
-      await db.connect();
+function createReconnectHandler(client: typeof db, name: string): () => Promise<void> {
+  async function reconnect(): Promise<void> {
+    try {
+      if (!client.isOpen) {
+        await client.connect();
+      }
+    } catch (e) {
+      console.error(`Failed to connect to Redis ${name}, retrying...`, e);
+      setTimeout(reconnect, 5000);
     }
-  } catch (err) {
-    console.error("Failed to connect to Redis, retrying...", err);
-    setTimeout(dbReconnect, 5000); // Retry after 5 seconds
   }
+  return reconnect;
 }
 
-async function archiveReconnect() {
-  try {
-    if (!archive.isOpen) {
-      await archive.connect();
-    }
-  } catch (err) {
-    console.error("Failed to connect to Redis, retrying...", err);
-    setTimeout(archiveReconnect, 5000); // Retry after 5 seconds
-  }
-}
+const dbReconnect = createReconnectHandler(db, "db");
+const archiveReconnect = createReconnectHandler(archive, "archive");
 
 dbReconnect();
 archiveReconnect();
@@ -129,49 +134,61 @@ db.on("error", (e) => {
 });
 
 db.on("end", () => {
-  warn("Redis connection ended");
+  warn("Redis connection ended, attempting reconnect...");
+  setTimeout(dbReconnect, 1000);
+});
+
+archive.on("error", (e) => {
+  if (e.message.startsWith("getaddr")) return;
+  err("Redis archive error", e.message);
+});
+
+archive.on("end", () => {
+  warn("Redis archive connection ended, attempting reconnect...");
+  setTimeout(archiveReconnect, 1000);
 });
 
 export default db;
 
-export const g = async (k) => {
-  const v = await db.get(k);
+export async function g(k: string): Promise<any> {
+  const v = await withTimeout(db.get(k), `get ${k}`);
   try {
     return JSON.parse(v);
   } catch (e) {
     return v;
   }
-};
+}
 
-export const s = (k, v) => {
+export function s(k: string, v: any): void {
   if (k === "user:null" || k === "user:undefined") fail("null user");
-  db.set(k, JSON.stringify(v));
-};
+  withTimeout(db.set(k, JSON.stringify(v)), `set ${k}`).catch(() => {});
+}
 
-export const ga = async (k) => {
-  const v = await archive.get(k);
+export async function ga(k: string): Promise<any> {
+  const v = await withTimeout(archive.get(k), `archive get ${k}`);
   try {
     return JSON.parse(v);
   } catch (e) {
     return v;
   }
-};
+}
 
-export const sa = (k, v) => {
+export function sa(k: string, v: any): void {
   if (k === "user:null" || k === "user:undefined") {
     warn("###### NULL USER #######");
     console.trace();
   }
-  archive.set(k, JSON.stringify(v));
-};
+  withTimeout(archive.set(k, JSON.stringify(v)), `archive set ${k}`).catch(() => {});
+}
 
-const retries = {};
-export const t = async (k, f) => {
+const retries: Record<string, number> = {};
+
+export async function t(k: string, f: (val: string | null, client: typeof db) => Promise<void>): Promise<void> {
   try {
-    await db.watch(k);
-    await f(await db.get(k), db);
-  } catch (err) {
-    if (!err.message.includes("watch")) throw err;
+    await withTimeout(db.watch(k), `watch ${k}`);
+    await f(await withTimeout(db.get(k), `get ${k}`), db);
+  } catch (e) {
+    if (!e.message.includes("watch") && !e.message.startsWith("Redis timeout")) throw e;
 
     const r = retries[k] || 0;
     retries[k] = r + 1;
@@ -186,4 +203,35 @@ export const t = async (k, f) => {
   }
 
   delete retries[k];
+}
+
+// Safe Redis operation wrappers with timeout protection
+// Use these instead of direct db.* calls to prevent hanging requests
+
+export const safeDb = {
+  // Set operations
+  sMembers: (key: string) => withTimeout(db.sMembers(key), `sMembers ${key}`),
+  sIsMember: (key: string, member: string) => withTimeout(db.sIsMember(key, member), `sIsMember ${key}`),
+  sAdd: (key: string, ...members: string[]) => withTimeout(db.sAdd(key, members), `sAdd ${key}`),
+  sRem: (key: string, ...members: string[]) => withTimeout(db.sRem(key, members), `sRem ${key}`),
+
+  // List operations
+  lRange: (key: string, start: number, stop: number) => withTimeout(db.lRange(key, start, stop), `lRange ${key}`),
+  lLen: (key: string) => withTimeout(db.lLen(key), `lLen ${key}`),
+
+  // Key operations
+  exists: (key: string) => withTimeout(db.exists(key), `exists ${key}`),
+  del: (key: string) => withTimeout(db.del(key), `del ${key}`),
+  set: (key: string, value: string, options?: any) => withTimeout(db.set(key, value, options), `set ${key}`),
+
+  // Hash operations
+  hSet(key: string, field: string | Record<string, string>, value?: string) {
+    const operation = typeof field === "string" ? db.hSet(key, field, value!) : db.hSet(key, field);
+    return withTimeout(operation, `hSet ${key}`);
+  },
+  hGet: (key: string, field: string) => withTimeout(db.hGet(key, field), `hGet ${key}`),
+
+  // Health check
+  ping: () => withTimeout(db.ping(), "ping"),
+  info: (section?: string) => withTimeout(db.info(section), `info ${section || "all"}`),
 };
