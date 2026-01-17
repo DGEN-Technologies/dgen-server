@@ -1,6 +1,6 @@
 import { getConfig } from "./config-loader";
 import api from "./api";
-import { db, g, ga, s } from "./db";
+import { db, g, ga, s, safeDb } from "./db";
 import { generate } from "./invoices";
 import { err, l, warn } from "./logging";
 // import { handleZap } from "./nostr"; // Nostr disabled
@@ -47,12 +47,12 @@ export const debit = async ({
 }) => {
   amount = parseInt(amount);
 
-  const whitelisted = await db.sIsMember(
+  const whitelisted = await safeDb.sIsMember(
     "whitelist",
     user?.username?.toLowerCase().trim(),
   );
 
-  const blacklisted = await db.sIsMember(
+  const blacklisted = await safeDb.sIsMember(
     "blacklist",
     user?.username?.toLowerCase().trim(),
   );
@@ -191,7 +191,7 @@ export const credit = async ({
   }
 
   if (!inv) {
-    await db.sAdd("missing", ref.split(":")[0]);
+    await safeDb.sAdd("missing", ref.split(":")[0]);
     return;
   }
 
@@ -566,7 +566,7 @@ export const sendLightning = async ({
     status: "pending"
   };
 
-  await db.sAdd("pending", pr);
+  await safeDb.sAdd("pending", pr);
 
   l("paying lightning invoice", pr.substr(-8), amount, fee);
   console.log(`[DEBUG] Attempting Lightning payment: amount=${amount}, fee=${fee}, invoice=${pr.substring(0, 50)}...`);
@@ -635,7 +635,7 @@ export const sendLightning = async ({
         // Update user balance
         await db.incrBy(`balance:${user.id}`, -(actualAmount + actualFee));
         
-        await db.sRem("pending", pr);
+        await safeDb.sRem("pending", pr);
       } catch (accountingErr) {
         console.error("[ERROR] Failed to update accounting after successful payment:", accountingErr);
         // Payment succeeded even if accounting fails
@@ -650,7 +650,7 @@ export const sendLightning = async ({
     err("failed to pay", pr.substr(-8), e.message);
     
     // Clean up pending status
-    await db.sRem("pending", pr);
+    await safeDb.sRem("pending", pr);
     
     // Don't call reverse() since we didn't debit yet
     throw e;
@@ -858,7 +858,7 @@ export const check = async () => {
   const config = getConfig();
   if (config.url.includes("dev")) return;
   try {
-    const payments = await db.sMembers("pending");
+    const payments = await safeDb.sMembers("pending");
 
     for (const pr of payments) {
       const p = await getPayment(pr);
@@ -893,7 +893,7 @@ const finalize = async (r, p) => {
   if (!preimage) preimage = r.payment_preimage;
   if (!preimage) fail("missing preimage");
 
-  await db.sRem("pending", p.hash);
+  await safeDb.sRem("pending", p.hash);
   l("payment completed", p.id, r.payment_preimage);
   // nwcNotify(p); // NWC disabled
 

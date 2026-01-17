@@ -1,5 +1,5 @@
 import { getConfig } from "./config-loader";
-import { db, g } from "./db";
+import { db, g, safeDb } from "./db";
 // import ln from "./ln"; // TODO: Replace with Breez SDK
 import { err, l, warn } from "./logging";
 import { mail, templates } from "./mail";
@@ -54,7 +54,7 @@ export const notify = async (p, user, withdrawal) => {
     err("problem emailing", e.message);
   }
 
-  const subscriptions = await db.sMembers(`${user.id}:subscriptions`);
+  const subscriptions = await safeDb.sMembers(`${user.id}:subscriptions`);
 
   const payload = {
     title: paymentReceived,
@@ -83,7 +83,7 @@ export const notify = async (p, user, withdrawal) => {
 export const nwcNotify = async (p) => {
   try {
     const user = await getUser(p.uid);
-    const pubkeys = await db.sMembers(`${user.id}:apps`);
+    const pubkeys = await safeDb.sMembers(`${user.id}:apps`);
     if (pubkeys.length) {
       const payment_hash = p.payment_hash || "";
       for (const pubkey of pubkeys) {
