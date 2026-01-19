@@ -1,6 +1,16 @@
+const parseIntStrict = (value: string | undefined, fallback: number): number => {
+  if (!value) return fallback;
+  const trimmed = value.trim();
+  if (!/^\d+$/.test(trimmed)) return fallback;
+  const parsed = Number(trimmed);
+  return Number.isFinite(parsed) ? parsed : fallback;
+};
+
+const port = parseIntStrict(process.env.PORT, 3119);
+
 export default {
-  port: parseInt(process.env.PORT || "3119"),
-  url: process.env.URL || `http://localhost:${process.env.PORT || 3119}`,
+  port,
+  url: process.env.URL || `http://localhost:${port}`,
   archive: process.env.REDIS_PASSWORD
     ? `${process.env.REDIS_TLS === 'true' ? 'rediss' : 'redis'}://:${process.env.REDIS_PASSWORD}@localhost:6379`
     : (process.env.REDIS_TLS === 'true' ? 'rediss://localhost:6379' : 'redis://localhost:6379'),
@@ -33,8 +43,8 @@ export default {
   //   environment: "sandbox"
   // },
   redis: {
-    maxConnections: parseInt(process.env.REDIS_MAX_CONNECTIONS || "5"),
-    connectionTimeout: parseInt(process.env.REDIS_CONNECTION_TIMEOUT || "3000"),
+    maxConnections: parseIntStrict(process.env.REDIS_MAX_CONNECTIONS, 5),
+    connectionTimeout: parseIntStrict(process.env.REDIS_CONNECTION_TIMEOUT, 3000),
     lazyConnect: true,
     retryDelayOnFailover: 100,
     enableReadyCheck: true,
@@ -49,5 +59,9 @@ export default {
     enforceHTTPS: false,
     trustProxy: false,
     sessionSecret: process.env.SESSION_SECRET || process.env.JWT_SECRET || "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+  },
+  esplora: {
+    bitcoinUrl: process.env.BITCOIN_ESPLORA_URL || "https://blockstream.info/api",
+    liquidUrl: process.env.LIQUID_ESPLORA_URL || "https://blockstream.info/liquid/api",
   }
 };

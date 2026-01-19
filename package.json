@@ -62,6 +62,10 @@
     "nodemon": "^2.0.22",
     "typescript": "^5.9.3"
   },
+  "optionalDependencies": {
+    "@dgen/validation": "file:../packages/validation",
+    "@dgen/esplora-types": "file:../packages/esplora-types"
+  },
   "apidoc": {
     "title": "DGEN Wallet Server API Documentation",
     "url": "https://api.dgentech.io/api"

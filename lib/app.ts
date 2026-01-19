@@ -16,16 +16,17 @@ import { setupLoggingMiddleware } from "./logging/middleware";
 import { setupMetricsMiddleware } from "./monitoring/middleware";
 import { securityHeaders } from "./middleware/security";
 
+const config = getConfig();
+
 const app = fastify({
   logger: true,
   disableRequestLogging: true,
   maxParamLength: 500,
+  trustProxy: config.security?.trustProxy ?? false,
 });
 
 const reqLogger = pino(pino.destination("req"));
 const resLogger = pino(pino.destination("res"));
-
-const config = getConfig();
 enforceHTTPS();
 
 const helmetOptions: any = {
@@ -132,15 +133,12 @@ app.addHook("onResponse", async (req, reply) => {
 
 app.register(fastifyRateLimit, {
   allowList: (req) => {
-    return req.raw.url?.includes("public");
+    const url = req.raw.url || "";
+    return url.startsWith("/public/");
   },
   max: 2000,
   timeWindow: 10000,
-  keyGenerator: (req) => {
-    const ip = (req.headers["cf-connecting-ip"] as string) || req.ip;
-    const ua = req.headers["user-agent"] || "unknown-ua";
-    return req.headers["rate-limit-by"] === "ua" ? ua : ip;
-  },
+  keyGenerator: (req) => req.ip,
   errorResponseBuilder: () => {
     return {
       statusCode: 429,
@@ -164,11 +162,10 @@ app.register(fastifyRateLimit, {
     if (userId) {
       return `user:${userId}`;
     }
-    const ip = (req.headers["cf-connecting-ip"] as string) || req.ip;
-    return `ip:${ip}`;
+    return `ip:${req.ip}`;
   },
   errorResponseBuilder: (req) => {
-    const ip = (req.headers["cf-connecting-ip"] as string) || req.ip;
+    const ip = req.ip;
     const ua = req.headers["user-agent"] || "unknown";
     const userId = req.user?.id || "anonymous";
 

@@ -23,14 +23,37 @@ const CONFIG_REQUIREMENTS: EnvironmentConfig = {
 
 export function validateConfiguration(): void {
   const env = process.env.NODE_ENV || 'development';
+  const isTestEnv =
+    env === 'test' ||
+    process.env.BUN_ENV === 'test' ||
+    process.env.BUN_TEST === 'true' ||
+    process.env.BUN_WORKER_ID !== undefined ||
+    process.argv.some(arg => arg.includes('test'));
+  if (isTestEnv && !process.env.PORT) {
+    process.env.PORT = '3119';
+  }
   const errors: string[] = [];
   const warnings: string[] = [];
+  const numericEnvErrors: string[] = [];
 
   for (const varName of CONFIG_REQUIREMENTS.required) {
     if (!process.env[varName]) {
       errors.push(`Missing required environment variable: ${varName}`);
     }
   }
+
+  const validateNumericEnv = (name: string): void => {
+    const value = process.env[name];
+    if (!value) return;
+    const trimmed = value.trim();
+    if (!/^\d+$/.test(trimmed)) {
+      numericEnvErrors.push(`${name} must be a valid integer`);
+    }
+  };
+
+  validateNumericEnv('PORT');
+  validateNumericEnv('REDIS_MAX_CONNECTIONS');
+  validateNumericEnv('REDIS_CONNECTION_TIMEOUT');
 
   const jwtSecret = process.env.JWT_SECRET;
   if (jwtSecret && jwtSecret.length > 0) {
@@ -50,9 +73,10 @@ export function validateConfiguration(): void {
     validateProductionSpecific(errors, warnings);
   }
 
-  if (errors.length > 0) {
+  if (errors.length > 0 || numericEnvErrors.length > 0) {
     console.error('\n❌ CONFIGURATION ERRORS:');
     errors.forEach(error => console.error(`  - ${error}`));
+    numericEnvErrors.forEach(error => console.error(`  - ${error}`));
     console.error('\nApplication cannot start with invalid configuration.\n');
     exit(1);
   }

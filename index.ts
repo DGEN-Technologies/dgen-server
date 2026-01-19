@@ -37,6 +37,7 @@ import wallet from "./routes/wallet";
 import health from "./routes/health";
 import metrics from "./routes/metrics";
 import webhook from "./routes/webhook";
+import esplora from "./routes/esplora";
 import { websocketManager } from "./lib/websocket/WebSocketManager";
 
 // Initialize background task manager
@@ -184,6 +185,63 @@ app.get("/pay/:username/:amount", lnurl.pay);
 app.post("/api/v1/notify", webhook.notify); // Breez calls this
 app.post("/api/webhook/respond", webhook.respond); // Browser responds here
 
+// Esplora proxy endpoints (cached, rate-limited)
+const esploraRateLimit = {
+  config: {
+    rateLimit: {
+      max: process.env.NODE_ENV === "development" ? 300 : 120,
+      timeWindow: "1 minute",
+      keyGenerator: (req) => req.ip,
+      errorResponseBuilder: () => ({
+        statusCode: 429,
+        error: "Too Many Requests",
+        message: "Esplora rate limit exceeded, retry later",
+        retryAfter: 60,
+      }),
+    },
+  },
+};
+
+app.get("/api/esplora/tx/:txid/status", esploraRateLimit, esplora.txStatus);
+app.get("/api/esplora/tx/:txid", esploraRateLimit, esplora.tx);
+app.get("/api/esplora/tx/:txid/hex", esploraRateLimit, esplora.txHex);
+app.get("/api/esplora/tx/:txid/raw", esploraRateLimit, esplora.txRaw);
+app.get("/api/esplora/address/:address/utxo", esploraRateLimit, esplora.addressUtxo);
+app.get("/api/esplora/scripthash/:hash/utxo", esploraRateLimit, esplora.scripthashUtxo);
+app.get("/api/esplora/address/:address/txs", esploraRateLimit, esplora.addressTxs);
+app.get("/api/esplora/address/:address/txs/chain", esploraRateLimit, esplora.addressTxsConfirmed);
+app.get("/api/esplora/address/:address/txs/mempool", esploraRateLimit, esplora.addressTxsMempool);
+app.get("/api/esplora/scripthash/:hash/txs", esploraRateLimit, esplora.scripthashTxs);
+app.get("/api/esplora/scripthash/:hash/txs/chain", esploraRateLimit, esplora.scripthashTxsConfirmed);
+app.get("/api/esplora/scripthash/:hash/txs/mempool", esploraRateLimit, esplora.scripthashTxsMempool);
+app.get("/api/esplora/blocks/tip/height", esploraRateLimit, esplora.tipHeight);
+app.get("/api/esplora/blocks/tip/hash", esploraRateLimit, esplora.tipHash);
+app.get("/api/esplora/block/:hash/header", esploraRateLimit, esplora.blockHeader);
+app.get("/api/esplora/block-height/:height", esploraRateLimit, esplora.blockHeight);
+app.get("/api/esplora/fee-estimates", esploraRateLimit, esplora.feeEstimates);
+app.post("/api/esplora/tx", esploraRateLimit, esplora.broadcast);
+app.get("/api/esplora/stats", auth, esplora.stats);
+
+// Network-prefixed Esplora endpoints (for SDK compatibility)
+app.get("/api/esplora/:network/tx/:txid/status", esploraRateLimit, esplora.txStatus);
+app.get("/api/esplora/:network/tx/:txid", esploraRateLimit, esplora.tx);
+app.get("/api/esplora/:network/tx/:txid/hex", esploraRateLimit, esplora.txHex);
+app.get("/api/esplora/:network/tx/:txid/raw", esploraRateLimit, esplora.txRaw);
+app.get("/api/esplora/:network/address/:address/utxo", esploraRateLimit, esplora.addressUtxo);
+app.get("/api/esplora/:network/scripthash/:hash/utxo", esploraRateLimit, esplora.scripthashUtxo);
+app.get("/api/esplora/:network/address/:address/txs", esploraRateLimit, esplora.addressTxs);
+app.get("/api/esplora/:network/address/:address/txs/chain", esploraRateLimit, esplora.addressTxsConfirmed);
+app.get("/api/esplora/:network/address/:address/txs/mempool", esploraRateLimit, esplora.addressTxsMempool);
+app.get("/api/esplora/:network/scripthash/:hash/txs", esploraRateLimit, esplora.scripthashTxs);
+app.get("/api/esplora/:network/scripthash/:hash/txs/chain", esploraRateLimit, esplora.scripthashTxsConfirmed);
+app.get("/api/esplora/:network/scripthash/:hash/txs/mempool", esploraRateLimit, esplora.scripthashTxsMempool);
+app.get("/api/esplora/:network/blocks/tip/height", esploraRateLimit, esplora.tipHeight);
+app.get("/api/esplora/:network/blocks/tip/hash", esploraRateLimit, esplora.tipHash);
+app.get("/api/esplora/:network/block/:hash/header", esploraRateLimit, esplora.blockHeader);
+app.get("/api/esplora/:network/block-height/:height", esploraRateLimit, esplora.blockHeight);
+app.get("/api/esplora/:network/fee-estimates", esploraRateLimit, esplora.feeEstimates);
+app.post("/api/esplora/:network/tx", esploraRateLimit, esplora.broadcast);
+
 // Freeze and confirm moved to browser SDK
 // app.post("/freeze", payments.freeze);
 // app.post("/confirm", payments.confirm);
@@ -311,7 +369,7 @@ app.post(
       rateLimit: {
         max: 5,
         timeWindow: "5 seconds",
-        keyGenerator: (req) => req.headers["cf-connecting-ip"] as string, // IP-based rate limiting
+        keyGenerator: (req) => req.ip,
       },
     },
   },

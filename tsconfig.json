@@ -24,6 +24,10 @@
       "$lib/*": ["./lib/*"],
       "$routes/*": ["./routes/*"],
       "$config": ["./config/index.ts", "./config.ts"],
+      "@dgen/esplora-types": [
+        "../packages/esplora-types/src/index.ts",
+        "./lib/esplora/types.ts"
+      ],
       "@cashu/cashu-ts": ["node_modules/@cashu/cashu-ts/dist/lib/es6/index.js"]
     }
   }
