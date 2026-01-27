@@ -10,6 +10,7 @@ import register from "../lib/register";
 import { emit } from "../lib/sockets";
 import upload from "../lib/upload";
 import { bail, fail, fields, getUser, pick } from "../lib/utils";
+import { getClientIp } from "../lib/ip";
 import whitelist from "../lib/whitelist";
 import { InputValidator, loginRateLimiter } from "../lib/middleware/security";
 import { $ } from "bun";
@@ -134,9 +135,12 @@ export default {
   },
 
   async create(req, res) {
-    const { body, headers } = req;
+    const { body } = req;
     try {
-      const ip = headers["cf-connecting-ip"];
+      const ip = getClientIp(req);
+      if (!ip) {
+        return res.code(400).send({ error: "Client IP unavailable" });
+      }
       if (!body.user) fail("no user object provided");
       let { user } = body;
 
@@ -361,7 +365,10 @@ export default {
       }
       username = usernameValidation.sanitized;
 
-      const ip = (req.headers["cf-connecting-ip"] as string) || req.ip;
+      const ip = getClientIp(req);
+      if (!ip) {
+        return res.code(400).send({ error: "Client IP unavailable" });
+      }
       const rateLimitCheck = loginRateLimiter.check(ip);
       if (!rateLimitCheck.allowed) {
         warn(`Login rate limit exceeded for IP ${ip}`, username);
@@ -395,7 +402,7 @@ export default {
       }
 
       if (username !== "admin")
-        l("logged in", username, req.headers["cf-connecting-ip"]);
+        l("logged in", username, ip);
 
       const payload = { id: user.id };
       const token = jwt.sign(payload, config.jwt);
@@ -417,7 +424,10 @@ export default {
   async nostrAuth(req, res) {
     try {
       const { event, challenge } = req.body;
-      const ip = req.headers["cf-connecting-ip"];
+      const ip = getClientIp(req);
+      if (!ip) {
+        return res.code(400).send({ error: "Client IP unavailable" });
+      }
       const c = await g(`challenge:${challenge}`);
       const { pubkey: key, kind } = event;
       if (kind !== 27235) fail("Invalid event");
@@ -652,7 +662,7 @@ export default {
       "password reset",
       user.username,
       code,
-      req.headers["cf-connecting-ip"],
+      getClientIp(req),
     );
 
     try {
