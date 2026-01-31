@@ -189,7 +189,7 @@ app.post("/api/webhook/respond", webhook.respond); // Browser responds here
 const esploraRateLimit = {
   config: {
     rateLimit: {
-      max: process.env.NODE_ENV === "development" ? 300 : 120,
+      max: process.env.NODE_ENV === "development" ? 12000 : 600,
       timeWindow: "1 minute",
       keyGenerator: (req) => req.ip,
       errorResponseBuilder: () => ({
