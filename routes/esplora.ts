@@ -1,5 +1,6 @@
 import { FastifyReply, FastifyRequest } from "fastify";
 import { bech32, bech32m } from "bech32";
+import * as blech32Lib from "blech32";
 import { sha256 } from "@noble/hashes/sha256";
 import { base58check } from "@scure/base";
 import {
@@ -143,7 +144,7 @@ const isValidHexBuffer = (buffer: Buffer): boolean => {
   return true;
 };
 
-const MAX_ADDRESS_LENGTH = 120;
+const MAX_ADDRESS_LENGTH = 200;
 const base58Address = /^[1-9A-HJ-NP-Za-km-z]{25,90}$/;
 const bech32Address = /^(bc1|tb1|bcrt1|lq1|tlq1|ex1|tex1)[0-9a-z]{6,}$/i;
 const bech32Prefixes = new Set([
@@ -183,11 +184,54 @@ const isValidBech32Address = (address: string): boolean => {
   return false;
 };
 
+const getBlech32Decoders = (): Array<{ decode: (value: string, limit?: number) => any }> => {
+  const lib: any = blech32Lib as any;
+  const candidates: Array<{ decode?: (value: string, limit?: number) => any }> = [
+    lib,
+    lib?.default,
+    lib?.blech32,
+    lib?.blech32m,
+    lib?.default?.blech32,
+    lib?.default?.blech32m,
+  ];
+  const decoders: Array<{ decode: (value: string, limit?: number) => any }> = [];
+  for (const candidate of candidates) {
+    if (candidate && typeof candidate.decode === "function") {
+      decoders.push(candidate as { decode: (value: string, limit?: number) => any });
+    }
+  }
+  return decoders;
+};
+
+const isValidBlech32Address = (address: string): boolean => {
+  if (!bech32Address.test(address)) return false;
+  const normalized = address.toLowerCase();
+  const prefix = normalized.split("1")[0];
+  if (!bech32Prefixes.has(prefix)) return false;
+
+  const decoders = getBlech32Decoders();
+  for (const decoder of decoders) {
+    try {
+      if (decoder.decode.length >= 2) {
+        decoder.decode(normalized, 2048);
+      } else {
+        decoder.decode(normalized);
+      }
+      return true;
+    } catch {}
+  }
+  return false;
+};
+
 const isValidAddress = (address: string | undefined): address is string => {
   if (!address) return false;
   if (address.length < 14 || address.length > MAX_ADDRESS_LENGTH) return false;
   if (!/^[a-zA-Z0-9]+$/.test(address)) return false;
-  return isValidBase58Address(address) || isValidBech32Address(address);
+  return (
+    isValidBase58Address(address) ||
+    isValidBech32Address(address) ||
+    isValidBlech32Address(address)
+  );
 };
 
 const sendRateLimitedList = (req: FastifyRequest, res: FastifyReply) => {
@@ -900,9 +944,40 @@ export const broadcast = async (
     const esplora = getEsploraService();
     const txid = await esplora.broadcastTx(trimmedTxHex, resolvedNetwork);
 
-    return res.send({ txid });
+    const accept = req.headers["accept"];
+    const wantsJson =
+      contentType === "application/json" ||
+      (typeof accept === "string" &&
+        accept.toLowerCase().includes("application/json") &&
+        contentType !== "text/plain");
+    if (wantsJson) {
+      res.type("application/json");
+      return res.send({ txid });
+    }
+    res.type("text/plain");
+    return res.send(txid);
   } catch (error) {
     console.error("[Esplora Route] broadcast error:", error);
+    const contentType = getContentType(req.headers["content-type"]);
+    const accept = req.headers["accept"];
+    const wantsJson =
+      contentType === "application/json" ||
+      (typeof accept === "string" &&
+        accept.toLowerCase().includes("application/json") &&
+        contentType !== "text/plain");
+    if (!wantsJson) {
+      if (error instanceof EsploraRateLimitError) {
+        res.header("X-Esplora-Rate-Limited", "true");
+        res.type("text/plain");
+        return res.code(503).send("Upstream rate limited");
+      }
+      if (error instanceof EsploraHttpError) {
+        res.type("text/plain");
+        return res.code(error.statusCode).send(error.message);
+      }
+      res.type("text/plain");
+      return res.code(500).send("Failed to broadcast transaction");
+    }
     return handleEsploraError(
       req,
       res,
