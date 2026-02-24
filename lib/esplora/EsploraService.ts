@@ -5,6 +5,9 @@ import { BlockstreamAuth } from "./BlockstreamAuth";
 interface EsploraConfig {
   bitcoinUrl: string;
   liquidUrl: string;
+  breezLiquidUrl: string;
+  breezApiKey?: string;
+  breezApiKeyHeader?: string;
 }
 
 export class EsploraRateLimitError extends Error {
@@ -151,9 +154,13 @@ export class EsploraService {
     this.config = {
       bitcoinUrl: process.env.BITCOIN_ESPLORA_URL || "https://blockstream.info/api",
       liquidUrl: process.env.LIQUID_ESPLORA_URL || "https://blockstream.info/liquid/api",
+      breezLiquidUrl: process.env.LIQUID_BREEZ_URL || "https://lq1.breez.technology/liquid/api",
+      breezApiKey: process.env.BREEZ_API_KEY?.trim() || undefined,
+      breezApiKeyHeader: process.env.BREEZ_API_KEY_HEADER?.trim() || "X-API-KEY",
     };
     validateEsploraUrl(this.config.bitcoinUrl, "BITCOIN_ESPLORA_URL");
     validateEsploraUrl(this.config.liquidUrl, "LIQUID_ESPLORA_URL");
+    validateEsploraUrl(this.config.breezLiquidUrl, "LIQUID_BREEZ_URL");
 
     const clientId = process.env.BLOCKSTREAM_CLIENT_ID?.trim();
     const clientSecret = process.env.BLOCKSTREAM_CLIENT_SECRET?.trim();
@@ -355,7 +362,11 @@ export class EsploraService {
     return staleData;
   }
 
-  private async buildHeaders(accept: string, contentType?: string): Promise<Record<string, string>> {
+  private async buildHeaders(
+    accept: string,
+    contentType?: string,
+    useAuth: boolean = true
+  ): Promise<Record<string, string>> {
     const headers: Record<string, string> = {
       "Accept": accept,
       "User-Agent": "DGEN-Server/1.0",
@@ -365,7 +376,7 @@ export class EsploraService {
       headers["Content-Type"] = contentType;
     }
 
-    if (this.auth) {
+    if (useAuth && this.auth) {
       const token = await this.auth.getAccessToken();
       headers.Authorization = `Bearer ${token}`;
     }
@@ -373,9 +384,29 @@ export class EsploraService {
     return headers;
   }
 
+  private getBreezApiHeaders(): Record<string, string> | undefined {
+    const apiKey = this.config.breezApiKey;
+    if (!apiKey) return undefined;
+    const headerName = this.config.breezApiKeyHeader || "X-API-KEY";
+    const lower = headerName.toLowerCase();
+    const value =
+      lower === "authorization" && !apiKey.startsWith("Bearer ")
+        ? `Bearer ${apiKey}`
+        : apiKey;
+    return { [headerName]: value };
+  }
+
   private getLiquidRootUrl(network: Network = "liquid"): string {
     const base = this.getBaseUrl(network);
     return base.replace(/\/api\/?$/, "");
+  }
+
+  private getBreezLiquidRootUrl(network: Network = "liquid"): string {
+    if (network !== "liquid" && network !== "liquidtestnet") {
+      throw new Error("Breez endpoints only supported for Liquid networks");
+    }
+    const base = this.config.breezLiquidUrl;
+    return base.replace(/\/+$/, "");
   }
 
   private async fetchWithTimeout(
@@ -448,7 +479,7 @@ export class EsploraService {
     const base = this.getBaseUrl(network).replace(/\/+$/, "");
     const query = queryString ? `?${queryString}` : "";
     const url = `${base}/waterfalls/waterfalls${query}`;
-    const headers = await this.buildHeaders(accept);
+    const headers = await this.buildHeaders(accept, undefined, true);
     return this.fetchWithTimeout(url, { headers });
   }
 
@@ -457,27 +488,41 @@ export class EsploraService {
     network: Network = "liquid",
     accept: string = "application/json"
   ): Promise<Response> {
-    const base = this.getLiquidRootUrl(network).replace(/\/+$/, "");
+    const base = this.getBreezLiquidRootUrl(network).replace(/\/+$/, "");
     const query = queryString ? `?${queryString}` : "";
     const url = `${base}/v2/waterfalls${query}`;
-    const headers = await this.buildHeaders(accept);
+    const headers = await this.buildHeaders(accept, undefined, false);
+    const breezHeaders = this.getBreezApiHeaders();
+    if (breezHeaders) {
+      Object.assign(headers, breezHeaders);
+    }
     return this.fetchWithTimeout(url, { headers });
   }
 
   async getLiquidServerRecipient(
     network: Network = "liquid"
   ): Promise<any> {
-    const base = this.getLiquidRootUrl(network).replace(/\/+$/, "");
+    const base = this.getBreezLiquidRootUrl(network).replace(/\/+$/, "");
     const url = `${base}/v1/server_recipient`;
     const cacheKey = `esplora:server_recipient:${network}`;
-    return this.fetchWithRetry<any>(url, cacheKey, CACHE_TTL.SERVER_RECIPIENT, 1);
+    const breezHeaders = this.getBreezApiHeaders();
+    return this.fetchWithRetry<any>(
+      url,
+      cacheKey,
+      CACHE_TTL.SERVER_RECIPIENT,
+      1,
+      false,
+      breezHeaders
+    );
   }
 
   private async fetchWithRetry<T>(
     url: string,
     cacheKey: string,
     ttl: number,
-    maxRetries: number = 3
+    maxRetries: number = 3,
+    useAuth: boolean = true,
+    extraHeaders?: Record<string, string>
   ): Promise<T> {
     const statKey = this.getStatKey(cacheKey);
     const backoffState = this.getBackoffState(statKey);
@@ -521,7 +566,15 @@ export class EsploraService {
     }
 
     // Create the request promise
-    const requestPromise = this.executeRequest<T>(url, cacheKey, ttl, maxRetries, statKey);
+    const requestPromise = this.executeRequest<T>(
+      url,
+      cacheKey,
+      ttl,
+      maxRetries,
+      statKey,
+      useAuth,
+      extraHeaders
+    );
     trackInFlight(cacheKey, requestPromise);
 
     try {
@@ -536,7 +589,9 @@ export class EsploraService {
     url: string,
     cacheKey: string,
     ttl: number,
-    maxRetries: number = 3
+    maxRetries: number = 3,
+    useAuth: boolean = true,
+    extraHeaders?: Record<string, string>
   ): Promise<string> {
     const statKey = this.getStatKey(cacheKey);
     const backoffState = this.getBackoffState(statKey);
@@ -575,7 +630,15 @@ export class EsploraService {
     }
 
     // Create the request promise
-    const requestPromise = this.executeTextRequest(url, cacheKey, ttl, maxRetries, statKey);
+    const requestPromise = this.executeTextRequest(
+      url,
+      cacheKey,
+      ttl,
+      maxRetries,
+      statKey,
+      useAuth,
+      extraHeaders
+    );
     trackInFlight(cacheKey, requestPromise);
 
     try {
@@ -645,7 +708,9 @@ export class EsploraService {
     cacheKey: string,
     ttl: number,
     maxRetries: number,
-    statKey: string
+    statKey: string,
+    useAuth: boolean,
+    extraHeaders?: Record<string, string>
   ): Promise<T> {
     let lastError: Error | null = null;
     let retryDelay = 1000; // Start with 1 second
@@ -653,7 +718,10 @@ export class EsploraService {
 
     for (let attempt = 0; attempt < maxRetries; attempt++) {
       try {
-        const headers = await this.buildHeaders("application/json");
+        const headers = await this.buildHeaders("application/json", undefined, useAuth);
+        if (extraHeaders) {
+          Object.assign(headers, extraHeaders);
+        }
 
         this.bumpStat(statKey, "upstreamCalls");
         const response = await this.fetchWithTimeout(url, { headers });
@@ -712,7 +780,9 @@ export class EsploraService {
     cacheKey: string,
     ttl: number,
     maxRetries: number,
-    statKey: string
+    statKey: string,
+    useAuth: boolean = true,
+    extraHeaders?: Record<string, string>
   ): Promise<Uint8Array> {
     let lastError: Error | null = null;
     let retryDelay = 1000; // Start with 1 second
@@ -720,7 +790,14 @@ export class EsploraService {
 
     for (let attempt = 0; attempt < maxRetries; attempt++) {
       try {
-        const headers = await this.buildHeaders("application/octet-stream");
+        const headers = await this.buildHeaders(
+          "application/octet-stream",
+          undefined,
+          useAuth
+        );
+        if (extraHeaders) {
+          Object.assign(headers, extraHeaders);
+        }
 
         this.bumpStat(statKey, "upstreamCalls");
         const response = await this.fetchWithTimeout(url, { headers });
@@ -779,7 +856,9 @@ export class EsploraService {
     cacheKey: string,
     ttl: number,
     maxRetries: number,
-    statKey: string
+    statKey: string,
+    useAuth: boolean,
+    extraHeaders?: Record<string, string>
   ): Promise<string> {
     let lastError: Error | null = null;
     let retryDelay = 1000; // Start with 1 second
@@ -787,7 +866,10 @@ export class EsploraService {
 
     for (let attempt = 0; attempt < maxRetries; attempt++) {
       try {
-        const headers = await this.buildHeaders("text/plain");
+        const headers = await this.buildHeaders("text/plain", undefined, useAuth);
+        if (extraHeaders) {
+          Object.assign(headers, extraHeaders);
+        }
 
         this.bumpStat(statKey, "upstreamCalls");
         const response = await this.fetchWithTimeout(url, { headers });
