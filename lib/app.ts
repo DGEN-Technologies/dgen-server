@@ -15,6 +15,7 @@ import { jwtStrategy } from "./auth";
 import { setupLoggingMiddleware } from "./logging/middleware";
 import { setupMetricsMiddleware } from "./monitoring/middleware";
 import { securityHeaders } from "./middleware/security";
+import { getClientIp } from "./ip";
 
 const config = getConfig();
 
@@ -115,18 +116,23 @@ app.addHook("onResponse", async (req, reply) => {
   if (reply.raw.statusCode >= 400 || reply.elapsedTime > 1000) {
     const rawCookies = req.raw.headers.cookie || "";
 
-    const cookies: any = rawCookies.split(";").reduce((acc, cookie) => {
-      const [key, value] = cookie.split("=").map((s) => s.trim());
-      if (key && value) acc[key] = value;
-      return acc;
-    }, {});
+    const cookies: Record<string, string> = rawCookies
+      .split(";")
+      .reduce((acc, cookie) => {
+        const idx = cookie.indexOf("=");
+        if (idx === -1) return acc;
+        const key = cookie.slice(0, idx).trim();
+        const value = cookie.slice(idx + 1).trim();
+        if (key && value) acc[key] = value;
+        return acc;
+      }, {} as Record<string, string>);
 
     resLogger.info({
       id: req.id,
       url: req.raw.url,
       statusCode: reply.raw.statusCode,
       durationMs: reply.elapsedTime,
-      username: cookies.username,
+      username: cookies.username ? "<redacted>" : undefined,
     });
   }
 });
@@ -138,7 +144,7 @@ app.register(fastifyRateLimit, {
   },
   max: 2000,
   timeWindow: 10000,
-  keyGenerator: (req) => req.ip,
+  keyGenerator: (req) => getClientIp(req) || req.ip || "unknown",
   errorResponseBuilder: () => {
     return {
       statusCode: 429,
@@ -162,7 +168,8 @@ app.register(fastifyRateLimit, {
     if (userId) {
       return `user:${userId}`;
     }
-    return `ip:${req.ip}`;
+    const ip = getClientIp(req) || req.ip || "unknown";
+    return `ip:${ip}`;
   },
   errorResponseBuilder: (req) => {
     const ip = req.ip;
@@ -220,6 +227,18 @@ await app.register(cors, {
     // Get allowed origins from config
     const config = getConfig();
     const allowedOrigins = config.cors?.allowedOrigins || [];
+    const isLocalOrigin = (value: string): boolean => {
+      try {
+        const parsed = new URL(value);
+        return (
+          parsed.hostname === "localhost" ||
+          parsed.hostname === "127.0.0.1" ||
+          parsed.hostname === "0.0.0.0"
+        );
+      } catch {
+        return false;
+      }
+    };
     
     // Debug logging only when explicitly enabled
     if (process.env.DEBUG_CORS === "true" && origin) {
@@ -230,6 +249,11 @@ await app.register(cors, {
     // Allow requests with no origin (like mobile apps or Postman)
     if (!origin) return cb(null, true);
     
+    // Always allow localhost origins for local development/testing
+    if (origin && isLocalOrigin(origin)) {
+      return cb(null, true);
+    }
+
     // In development, allow all origins
     if (process.env.NODE_ENV === 'development') {
       return cb(null, true);
@@ -249,7 +273,7 @@ await app.register(cors, {
   },
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With']
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'Cache-Control']
 });
 
 app.setErrorHandler(async (error, request, reply) => {

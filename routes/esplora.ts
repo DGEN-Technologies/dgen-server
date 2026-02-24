@@ -1,5 +1,6 @@
 import { FastifyReply, FastifyRequest } from "fastify";
 import { bech32, bech32m } from "bech32";
+import * as blech32Lib from "blech32";
 import { sha256 } from "@noble/hashes/sha256";
 import { base58check } from "@scure/base";
 import {
@@ -40,6 +41,14 @@ interface NetworkQuery {
 
 interface TxsQuery extends NetworkQuery {
   lastSeenTxid?: string;
+}
+
+interface WaterfallsQuery extends NetworkQuery {
+  descriptor?: string;
+  addresses?: string;
+  page?: string;
+  to_index?: string;
+  utxo_only?: string;
 }
 
 interface BroadcastBody {
@@ -143,7 +152,7 @@ const isValidHexBuffer = (buffer: Buffer): boolean => {
   return true;
 };
 
-const MAX_ADDRESS_LENGTH = 120;
+const MAX_ADDRESS_LENGTH = 300;
 const base58Address = /^[1-9A-HJ-NP-Za-km-z]{25,90}$/;
 const bech32Address = /^(bc1|tb1|bcrt1|lq1|tlq1|ex1|tex1)[0-9a-z]{6,}$/i;
 const bech32Prefixes = new Set([
@@ -154,6 +163,7 @@ const bech32Prefixes = new Set([
   "tlq",
   "ex",
   "tex",
+  "el",
 ]);
 const base58Check = base58check(sha256);
 
@@ -183,16 +193,105 @@ const isValidBech32Address = (address: string): boolean => {
   return false;
 };
 
+const getBlech32Decoders = (): Array<{ decode: (value: string, limit?: number) => any }> => {
+  const lib: any = blech32Lib as any;
+  const candidates: Array<{ decode?: (value: string, limit?: number) => any }> = [
+    lib,
+    lib?.default,
+    lib?.blech32,
+    lib?.blech32m,
+    lib?.default?.blech32,
+    lib?.default?.blech32m,
+  ];
+  const decoders: Array<{ decode: (value: string, limit?: number) => any }> = [];
+  for (const candidate of candidates) {
+    if (candidate && typeof candidate.decode === "function") {
+      decoders.push(candidate as { decode: (value: string, limit?: number) => any });
+    }
+  }
+  return decoders;
+};
+
+const isValidBlech32Address = (address: string): boolean => {
+  if (!bech32Address.test(address)) return false;
+  const normalized = address.toLowerCase();
+  const prefix = normalized.split("1")[0];
+  if (!bech32Prefixes.has(prefix)) return false;
+
+  const decoders = getBlech32Decoders();
+  for (const decoder of decoders) {
+    try {
+      decoder.decode(normalized, 2048);
+      return true;
+    } catch {
+      try {
+        decoder.decode(normalized);
+        return true;
+      } catch {}
+    }
+  }
+  return false;
+};
+
 const isValidAddress = (address: string | undefined): address is string => {
   if (!address) return false;
   if (address.length < 14 || address.length > MAX_ADDRESS_LENGTH) return false;
   if (!/^[a-zA-Z0-9]+$/.test(address)) return false;
-  return isValidBase58Address(address) || isValidBech32Address(address);
+  return (
+    isValidBase58Address(address) ||
+    isValidBech32Address(address) ||
+    isValidBlech32Address(address)
+  );
+};
+
+const isProbablyConfidentialAddress = (address: string): boolean => {
+  const normalized = address.toLowerCase();
+  return (
+    normalized.startsWith("lq1") ||
+    normalized.startsWith("tlq1") ||
+    normalized.startsWith("ex1") ||
+    normalized.startsWith("tex1")
+  );
 };
 
 const sendRateLimitedList = (req: FastifyRequest, res: FastifyReply) => {
   res.header("X-Esplora-Rate-Limited", "true");
   return sendError(req, res, 503, "ESPLORA_RATE_LIMITED", "Upstream rate limited");
+};
+
+const MAX_WATERFALLS_QUERY_LENGTH = 2000;
+const MAX_WATERFALLS_ADDRESSES = 200;
+
+const validateWaterfallsQuery = (
+  req: FastifyRequest<{ Querystring: WaterfallsQuery }>,
+  res: FastifyReply
+): boolean => {
+  const { addresses, descriptor } = req.query || {};
+  if (addresses && addresses.length > MAX_WATERFALLS_QUERY_LENGTH) {
+    sendError(req, res, 400, "INVALID_ADDRESSES", "Addresses list too long");
+    return false;
+  }
+  if (descriptor && descriptor.length > MAX_WATERFALLS_QUERY_LENGTH) {
+    sendError(req, res, 400, "INVALID_DESCRIPTOR", "Descriptor too long");
+    return false;
+  }
+  if (addresses) {
+    const list = addresses
+      .split(",")
+      .map((entry) => entry.trim())
+      .filter(Boolean);
+    if (list.length > MAX_WATERFALLS_ADDRESSES) {
+      sendError(req, res, 400, "INVALID_ADDRESSES", "Too many addresses");
+      return false;
+    }
+    for (const addr of list) {
+      if (!isValidAddress(addr)) {
+        sendError(req, res, 400, "INVALID_ADDRESS", "Invalid address format");
+        return false;
+      }
+    }
+  }
+  return true;
 };
 
 export const handleEsploraError = (
@@ -399,6 +498,15 @@ export const addressUtxo = async (
     if (!network) return;
 
     if (!isValidAddress(address)) {
+      if (isProbablyConfidentialAddress(address)) {
+        return sendError(
+          req,
+          res,
+          400,
+          "INVALID_CONFIDENTIAL_ADDRESS",
+          "Confidential address could not be validated. Please ensure it is correct.",
+        );
+      }
       return sendError(req, res, 400, "INVALID_ADDRESS", "Invalid address format");
     }
 
@@ -528,6 +636,15 @@ export const addressTxs = async (
     if (!network) return;
 
     if (!isValidAddress(address)) {
+      if (isProbablyConfidentialAddress(address)) {
+        return sendError(
+          req,
+          res,
+          400,
+          "INVALID_CONFIDENTIAL_ADDRESS",
+          "Confidential address could not be validated. Please ensure it is correct.",
+        );
+      }
       return sendError(req, res, 400, "INVALID_ADDRESS", "Invalid address format");
     }
 
@@ -567,6 +684,15 @@ export const addressTxsConfirmed = async (
     if (!network) return;
 
     if (!isValidAddress(address)) {
+      if (isProbablyConfidentialAddress(address)) {
+        return sendError(
+          req,
+          res,
+          400,
+          "INVALID_CONFIDENTIAL_ADDRESS",
+          "Confidential address could not be validated. Please ensure it is correct.",
+        );
+      }
       return sendError(req, res, 400, "INVALID_ADDRESS", "Invalid address format");
     }
 
@@ -602,6 +728,15 @@ export const addressTxsMempool = async (
     if (!network) return;
 
     if (!isValidAddress(address)) {
+      if (isProbablyConfidentialAddress(address)) {
+        return sendError(
+          req,
+          res,
+          400,
+          "INVALID_CONFIDENTIAL_ADDRESS",
+          "Confidential address could not be validated. Please ensure it is correct.",
+        );
+      }
       return sendError(req, res, 400, "INVALID_ADDRESS", "Invalid address format");
     }
 
@@ -900,9 +1035,40 @@ export const broadcast = async (
     const esplora = getEsploraService();
     const txid = await esplora.broadcastTx(trimmedTxHex, resolvedNetwork);
 
-    return res.send({ txid });
+    const accept = req.headers["accept"];
+    const wantsJson =
+      contentType === "application/json" ||
+      (typeof accept === "string" &&
+        accept.toLowerCase().includes("application/json") &&
+        contentType !== "text/plain");
+    if (wantsJson) {
+      res.type("application/json");
+      return res.send({ txid });
+    }
+    res.type("text/plain");
+    return res.send(txid);
   } catch (error) {
     console.error("[Esplora Route] broadcast error:", error);
+    const contentType = getContentType(req.headers["content-type"]);
+    const accept = req.headers["accept"];
+    const wantsJson =
+      contentType === "application/json" ||
+      (typeof accept === "string" &&
+        accept.toLowerCase().includes("application/json") &&
+        contentType !== "text/plain");
+    if (!wantsJson) {
+      if (error instanceof EsploraRateLimitError) {
+        res.header("X-Esplora-Rate-Limited", "true");
+        res.type("text/plain");
+        return res.code(503).send("Upstream rate limited");
+      }
+      if (error instanceof EsploraHttpError) {
+        res.type("text/plain");
+        return res.code(error.statusCode).send(error.message);
+      }
+      res.type("text/plain");
+      return res.code(500).send("Failed to broadcast transaction");
+    }
     return handleEsploraError(
       req,
       res,
@@ -960,6 +1126,126 @@ export const stats = async (
   }
 };
 
+// Waterfalls QuickSync proxy
+export const waterfalls = async (
+  req: FastifyRequest<{ Params: NetworkParams; Querystring: WaterfallsQuery }>,
+  res: FastifyReply
+) => {
+  try {
+    const network = ensureNetwork(req, res);
+    if (!network) return;
+    if (!validateWaterfallsQuery(req, res)) return;
+
+    const acceptHeader = req.headers["accept"];
+    const accept =
+      typeof acceptHeader === "string" && acceptHeader.includes("application/cbor")
+        ? "application/cbor"
+        : "application/json";
+
+    const queryString = req.raw.url?.split("?")[1];
+    const esplora = getEsploraService();
+    const upstream = await esplora.fetchWaterfalls(queryString, network, accept);
+
+    const contentType = upstream.headers.get("content-type") || accept;
+    res.header("content-type", contentType);
+    const body = Buffer.from(await upstream.arrayBuffer());
+
+    return res.code(upstream.status).send(body);
+  } catch (error) {
+    console.error("[Esplora Route] waterfalls error:", error);
+    return handleEsploraError(
+      req,
+      res,
+      error,
+      "ESPLORA_WATERFALLS_FAILED",
+      "Failed to fetch waterfalls data"
+    );
+  }
+};
+
+// Breez Liquid server recipient (used by SDK)
+export const liquidServerRecipient = async (
+  req: FastifyRequest<{ Params: NetworkParams }>,
+  res: FastifyReply
+) => {
+  try {
+    const network = ensureNetwork(req, res);
+    if (!network) return;
+    if (network !== "liquid" && network !== "liquidtestnet") {
+      return sendError(
+        req,
+        res,
+        400,
+        "INVALID_NETWORK",
+        "Server recipient only supported for Liquid networks"
+      );
+    }
+
+    const esplora = getEsploraService();
+    const data = await esplora.getLiquidServerRecipient(network);
+    return res.send(data);
+  } catch (error) {
+    console.error("[Esplora Route] liquidServerRecipient error:", error);
+    return handleEsploraError(
+      req,
+      res,
+      error,
+      "ESPLORA_SERVER_RECIPIENT_FAILED",
+      "Failed to fetch server recipient"
+    );
+  }
+};
+
+// Breez Waterfalls v2 (Liquid only)
+export const liquidWaterfallsV2 = async (
+  req: FastifyRequest<{ Params: NetworkParams; Querystring: WaterfallsQuery }>,
+  res: FastifyReply
+) => {
+  try {
+    const network = ensureNetwork(req, res);
+    if (!network) return;
+    if (!validateWaterfallsQuery(req, res)) return;
+    if (network !== "liquid" && network !== "liquidtestnet") {
+      return sendError(
+        req,
+        res,
+        400,
+        "INVALID_NETWORK",
+        "Waterfalls v2 only supported for Liquid networks"
+      );
+    }
+
+    const acceptHeader = req.headers["accept"];
+    const accept =
+      typeof acceptHeader === "string" && acceptHeader.includes("application/cbor")
+        ? "application/cbor"
+        : "application/json";
+
+    const queryString = req.raw.url?.split("?")[1];
+    const esplora = getEsploraService();
+    const upstream = await esplora.fetchLiquidWaterfallsV2(
+      queryString,
+      network,
+      accept
+    );
+
+    const contentType = upstream.headers.get("content-type") || accept;
+    res.header("content-type", contentType);
+    const body = Buffer.from(await upstream.arrayBuffer());
+
+    return res.code(upstream.status).send(body);
+  } catch (error) {
+    console.error("[Esplora Route] liquidWaterfallsV2 error:", error);
+    return handleEsploraError(
+      req,
+      res,
+      error,
+      "ESPLORA_WATERFALLS_V2_FAILED",
+      "Failed to fetch waterfalls v2 data"
+    );
+  }
+};
+
 export default {
   txStatus,
   tx,
@@ -980,4 +1266,7 @@ export default {
   broadcast,
   feeEstimates,
   stats,
+  waterfalls,
+  liquidServerRecipient,
+  liquidWaterfallsV2,
 };
