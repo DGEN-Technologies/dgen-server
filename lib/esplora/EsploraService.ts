@@ -434,6 +434,18 @@ export class EsploraService {
     }
   }
 
+  async fetchWaterfalls(
+    queryString: string | undefined,
+    network: Network = "liquid",
+    accept: string = "application/json"
+  ): Promise<Response> {
+    const base = this.getBaseUrl(network).replace(/\/+$/, "");
+    const query = queryString ? `?${queryString}` : "";
+    const url = `${base}/waterfalls/waterfalls${query}`;
+    const headers = await this.buildHeaders(accept);
+    return this.fetchWithTimeout(url, { headers });
+  }
+
   private async fetchWithRetry<T>(
     url: string,
     cacheKey: string,

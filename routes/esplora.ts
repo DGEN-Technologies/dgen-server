@@ -43,6 +43,14 @@ interface TxsQuery extends NetworkQuery {
   lastSeenTxid?: string;
 }
 
+interface WaterfallsQuery extends NetworkQuery {
+  descriptor?: string;
+  addresses?: string;
+  page?: string;
+  to_index?: string;
+  utxo_only?: string;
+}
+
 interface BroadcastBody {
   txHex: string;
   network?: Network;
@@ -223,6 +231,13 @@ const isValidBlech32Address = (address: string): boolean => {
   return false;
 };
 
+const isLikelyLiquidBech32Address = (address: string): boolean => {
+  if (!bech32Address.test(address)) return false;
+  const normalized = address.toLowerCase();
+  const prefix = normalized.split("1")[0];
+  return prefix === "lq" || prefix === "tlq" || prefix === "ex" || prefix === "tex";
+};
+
 const isValidAddress = (address: string | undefined): address is string => {
   if (!address) return false;
   if (address.length < 14 || address.length > MAX_ADDRESS_LENGTH) return false;
@@ -230,7 +245,18 @@ const isValidAddress = (address: string | undefined): address is string => {
   return (
     isValidBase58Address(address) ||
     isValidBech32Address(address) ||
-    isValidBlech32Address(address)
+    isValidBlech32Address(address) ||
+    isLikelyLiquidBech32Address(address)
+  );
+};
+
+const isProbablyConfidentialAddress = (address: string): boolean => {
+  const normalized = address.toLowerCase();
+  return (
+    normalized.startsWith("lq1") ||
+    normalized.startsWith("tlq1") ||
+    normalized.startsWith("ex1") ||
+    normalized.startsWith("tex1")
   );
 };
 
@@ -443,6 +469,15 @@ export const addressUtxo = async (
     if (!network) return;
 
     if (!isValidAddress(address)) {
+      if (isProbablyConfidentialAddress(address)) {
+        return sendError(
+          req,
+          res,
+          400,
+          "INVALID_CONFIDENTIAL_ADDRESS",
+          "Confidential address could not be validated. Please ensure it is correct.",
+        );
+      }
       return sendError(req, res, 400, "INVALID_ADDRESS", "Invalid address format");
     }
 
@@ -572,6 +607,15 @@ export const addressTxs = async (
     if (!network) return;
 
     if (!isValidAddress(address)) {
+      if (isProbablyConfidentialAddress(address)) {
+        return sendError(
+          req,
+          res,
+          400,
+          "INVALID_CONFIDENTIAL_ADDRESS",
+          "Confidential address could not be validated. Please ensure it is correct.",
+        );
+      }
       return sendError(req, res, 400, "INVALID_ADDRESS", "Invalid address format");
     }
 
@@ -611,6 +655,15 @@ export const addressTxsConfirmed = async (
     if (!network) return;
 
     if (!isValidAddress(address)) {
+      if (isProbablyConfidentialAddress(address)) {
+        return sendError(
+          req,
+          res,
+          400,
+          "INVALID_CONFIDENTIAL_ADDRESS",
+          "Confidential address could not be validated. Please ensure it is correct.",
+        );
+      }
       return sendError(req, res, 400, "INVALID_ADDRESS", "Invalid address format");
     }
 
@@ -646,6 +699,15 @@ export const addressTxsMempool = async (
     if (!network) return;
 
     if (!isValidAddress(address)) {
+      if (isProbablyConfidentialAddress(address)) {
+        return sendError(
+          req,
+          res,
+          400,
+          "INVALID_CONFIDENTIAL_ADDRESS",
+          "Confidential address could not be validated. Please ensure it is correct.",
+        );
+      }
       return sendError(req, res, 400, "INVALID_ADDRESS", "Invalid address format");
     }
 
@@ -1035,6 +1097,42 @@ export const stats = async (
   }
 };
 
+// Waterfalls QuickSync proxy
+export const waterfalls = async (
+  req: FastifyRequest<{ Params: NetworkParams; Querystring: WaterfallsQuery }>,
+  res: FastifyReply
+) => {
+  try {
+    const network = ensureNetwork(req, res);
+    if (!network) return;
+
+    const acceptHeader = req.headers["accept"];
+    const accept =
+      typeof acceptHeader === "string" && acceptHeader.includes("application/cbor")
+        ? "application/cbor"
+        : "application/json";
+
+    const queryString = req.raw.url?.split("?")[1];
+    const esplora = getEsploraService();
+    const upstream = await esplora.fetchWaterfalls(queryString, network, accept);
+
+    const contentType = upstream.headers.get("content-type") || accept;
+    res.header("content-type", contentType);
+    const body = Buffer.from(await upstream.arrayBuffer());
+
+    return res.code(upstream.status).send(body);
+  } catch (error) {
+    console.error("[Esplora Route] waterfalls error:", error);
+    return handleEsploraError(
+      req,
+      res,
+      error,
+      "ESPLORA_WATERFALLS_FAILED",
+      "Failed to fetch waterfalls data"
+    );
+  }
+};
+
 export default {
   txStatus,
   tx,
@@ -1055,4 +1153,5 @@ export default {
   broadcast,
   feeEstimates,
   stats,
+  waterfalls,
 };

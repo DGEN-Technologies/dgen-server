@@ -221,6 +221,7 @@ app.get("/api/esplora/block-height/:height", esploraRateLimit, esplora.blockHeig
 app.get("/api/esplora/fee-estimates", esploraRateLimit, esplora.feeEstimates);
 app.post("/api/esplora/tx", esploraRateLimit, esplora.broadcast);
 app.get("/api/esplora/stats", auth, esplora.stats);
+app.get("/api/esplora/waterfalls/waterfalls", esploraRateLimit, esplora.waterfalls);
 
 // Network-prefixed Esplora endpoints (for SDK compatibility)
 app.get("/api/esplora/:network/tx/:txid/status", esploraRateLimit, esplora.txStatus);
@@ -241,6 +242,7 @@ app.get("/api/esplora/:network/block/:hash/header", esploraRateLimit, esplora.bl
 app.get("/api/esplora/:network/block-height/:height", esploraRateLimit, esplora.blockHeight);
 app.get("/api/esplora/:network/fee-estimates", esploraRateLimit, esplora.feeEstimates);
 app.post("/api/esplora/:network/tx", esploraRateLimit, esplora.broadcast);
+app.get("/api/esplora/:network/waterfalls/waterfalls", esploraRateLimit, esplora.waterfalls);
 
 // Freeze and confirm moved to browser SDK
 // app.post("/freeze", payments.freeze);

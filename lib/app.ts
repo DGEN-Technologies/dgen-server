@@ -220,6 +220,18 @@ await app.register(cors, {
     // Get allowed origins from config
     const config = getConfig();
     const allowedOrigins = config.cors?.allowedOrigins || [];
+    const isLocalOrigin = (value: string): boolean => {
+      try {
+        const parsed = new URL(value);
+        return (
+          parsed.hostname === "localhost" ||
+          parsed.hostname === "127.0.0.1" ||
+          parsed.hostname === "0.0.0.0"
+        );
+      } catch {
+        return false;
+      }
+    };
     
     // Debug logging only when explicitly enabled
     if (process.env.DEBUG_CORS === "true" && origin) {
@@ -230,6 +242,11 @@ await app.register(cors, {
     // Allow requests with no origin (like mobile apps or Postman)
     if (!origin) return cb(null, true);
     
+    // Always allow localhost origins for local development/testing
+    if (origin && isLocalOrigin(origin)) {
+      return cb(null, true);
+    }
+
     // In development, allow all origins
     if (process.env.NODE_ENV === 'development') {
       return cb(null, true);
