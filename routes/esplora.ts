@@ -152,7 +152,7 @@ const isValidHexBuffer = (buffer: Buffer): boolean => {
   return true;
 };
 
-const MAX_ADDRESS_LENGTH = 200;
+const MAX_ADDRESS_LENGTH = 300;
 const base58Address = /^[1-9A-HJ-NP-Za-km-z]{25,90}$/;
 const bech32Address = /^(bc1|tb1|bcrt1|lq1|tlq1|ex1|tex1)[0-9a-z]{6,}$/i;
 const bech32Prefixes = new Set([
@@ -163,6 +163,7 @@ const bech32Prefixes = new Set([
   "tlq",
   "ex",
   "tex",
+  "el",
 ]);
 const base58Check = base58check(sha256);
 
@@ -220,22 +221,16 @@ const isValidBlech32Address = (address: string): boolean => {
   const decoders = getBlech32Decoders();
   for (const decoder of decoders) {
     try {
-      if (decoder.decode.length >= 2) {
-        decoder.decode(normalized, 2048);
-      } else {
-        decoder.decode(normalized);
-      }
+      decoder.decode(normalized, 2048);
       return true;
-    } catch {}
+    } catch {
+      try {
+        decoder.decode(normalized);
+        return true;
+      } catch {}
+    }
   }
   return false;
-};
-
-const isLikelyLiquidBech32Address = (address: string): boolean => {
-  if (!bech32Address.test(address)) return false;
-  const normalized = address.toLowerCase();
-  const prefix = normalized.split("1")[0];
-  return prefix === "lq" || prefix === "tlq" || prefix === "ex" || prefix === "tex";
 };
 
 const isValidAddress = (address: string | undefined): address is string => {
@@ -245,8 +240,7 @@ const isValidAddress = (address: string | undefined): address is string => {
   return (
     isValidBase58Address(address) ||
     isValidBech32Address(address) ||
-    isValidBlech32Address(address) ||
-    isLikelyLiquidBech32Address(address)
+    isValidBlech32Address(address)
   );
 };
 
@@ -263,6 +257,41 @@ const isProbablyConfidentialAddress = (address: string): boolean => {
 const sendRateLimitedList = (req: FastifyRequest, res: FastifyReply) => {
   res.header("X-Esplora-Rate-Limited", "true");
   return sendError(req, res, 503, "ESPLORA_RATE_LIMITED", "Upstream rate limited");
+};
+
+const MAX_WATERFALLS_QUERY_LENGTH = 2000;
+const MAX_WATERFALLS_ADDRESSES = 200;
+
+const validateWaterfallsQuery = (
+  req: FastifyRequest<{ Querystring: WaterfallsQuery }>,
+  res: FastifyReply
+): boolean => {
+  const { addresses, descriptor } = req.query || {};
+  if (addresses && addresses.length > MAX_WATERFALLS_QUERY_LENGTH) {
+    sendError(req, res, 400, "INVALID_ADDRESSES", "Addresses list too long");
+    return false;
+  }
+  if (descriptor && descriptor.length > MAX_WATERFALLS_QUERY_LENGTH) {
+    sendError(req, res, 400, "INVALID_DESCRIPTOR", "Descriptor too long");
+    return false;
+  }
+  if (addresses) {
+    const list = addresses
+      .split(",")
+      .map((entry) => entry.trim())
+      .filter(Boolean);
+    if (list.length > MAX_WATERFALLS_ADDRESSES) {
+      sendError(req, res, 400, "INVALID_ADDRESSES", "Too many addresses");
+      return false;
+    }
+    for (const addr of list) {
+      if (!isValidAddress(addr)) {
+        sendError(req, res, 400, "INVALID_ADDRESS", "Invalid address format");
+        return false;
+      }
+    }
+  }
+  return true;
 };
 
 export const handleEsploraError = (
@@ -1105,6 +1134,7 @@ export const waterfalls = async (
   try {
     const network = ensureNetwork(req, res);
     if (!network) return;
+    if (!validateWaterfallsQuery(req, res)) return;
 
     const acceptHeader = req.headers["accept"];
     const accept =
@@ -1174,6 +1204,7 @@ export const liquidWaterfallsV2 = async (
   try {
     const network = ensureNetwork(req, res);
     if (!network) return;
+    if (!validateWaterfallsQuery(req, res)) return;
     if (network !== "liquid" && network !== "liquidtestnet") {
       return sendError(
         req,

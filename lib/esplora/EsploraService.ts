@@ -476,10 +476,14 @@ export class EsploraService {
     network: Network = "liquid",
     accept: string = "application/json"
   ): Promise<Response> {
-    const base = this.getBaseUrl(network).replace(/\/+$/, "");
+    const base =
+      network === "liquid" || network === "liquidtestnet"
+        ? this.getBreezLiquidRootUrl(network).replace(/\/+$/, "")
+        : this.getBaseUrl(network).replace(/\/+$/, "");
     const query = queryString ? `?${queryString}` : "";
     const url = `${base}/waterfalls/waterfalls${query}`;
-    const headers = await this.buildHeaders(accept, undefined, true);
+    const useAuth = !(network === "liquid" || network === "liquidtestnet");
+    const headers = await this.buildHeaders(accept, undefined, useAuth);
     return this.fetchWithTimeout(url, { headers });
   }
 

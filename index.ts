@@ -3,7 +3,7 @@ import { admin, auth, optional } from "./lib/auth";
 import { initializeServices } from "./lib/services";
 import { BackgroundTaskManager } from "./lib/services/BackgroundTaskManager";
 import { mkdirSync, existsSync } from "fs";
-import { join } from "path";
+import { basename, extname, join } from "path";
 
 initializeServices();
 
@@ -39,6 +39,7 @@ import metrics from "./routes/metrics";
 import webhook from "./routes/webhook";
 import esplora from "./routes/esplora";
 import { websocketManager } from "./lib/websocket/WebSocketManager";
+import { getClientIp } from "./lib/ip";
 
 // Initialize background task manager
 const backgroundTaskManager = BackgroundTaskManager.getInstance();
@@ -191,7 +192,7 @@ const esploraRateLimit = {
     rateLimit: {
       max: process.env.NODE_ENV === "development" ? 12000 : 600,
       timeWindow: "1 minute",
-      keyGenerator: (req) => req.ip,
+      keyGenerator: (req) => getClientIp(req) || req.ip || "unknown",
       errorResponseBuilder: () => ({
         statusCode: 429,
         error: "Too Many Requests",
@@ -305,27 +306,44 @@ app.post("/upload/:type", users.upload);
 
 // Handle preflight requests for public files
 app.options("/public/:filename", async (_, res) => {
-  const allowedOrigins = process.env.CORS_ALLOWED_ORIGINS || '*';
-  res
-    .header('Access-Control-Allow-Origin', allowedOrigins)
-    .header('Access-Control-Allow-Methods', 'GET, OPTIONS')
-    .header('Access-Control-Allow-Headers', 'Content-Type')
+  const allowedOrigins = process.env.CORS_ALLOWED_ORIGINS || "*";
+  const origin = _.headers.origin;
+  const allowedList = allowedOrigins
+    .split(",")
+    .map((entry) => entry.trim())
+    .filter(Boolean);
+  let allowOrigin: string | null = null;
+  if (allowedOrigins === "*") {
+    allowOrigin = "*";
+  } else if (origin && allowedList.includes(origin)) {
+    allowOrigin = origin;
+  }
+  if (!allowOrigin) {
+    return res.code(403).send();
+  }
+  return res
+    .header("Access-Control-Allow-Origin", allowOrigin)
+    .header("Access-Control-Allow-Methods", "GET, OPTIONS")
+    .header("Access-Control-Allow-Headers", "Content-Type")
     .send();
 });
 
 // Serve uploaded files
 app.get("/public/:filename", async (req, res) => {
   const { filename } = req.params as { filename: string };
-  const path = require("path");
-  let filePath = path.join(process.cwd(), "data", "uploads", filename);
+  const safeName = basename(filename);
+  if (safeName !== filename) {
+    return res.code(400).send("Invalid filename");
+  }
+  let filePath = join(process.cwd(), "data", "uploads", safeName);
   
   try {
     let file = Bun.file(filePath);
     let exists = await file.exists();
     
     // If file doesn't exist and it's a .webp file, serve the default image
-    if (!exists && filename.endsWith('.webp')) {
-      filePath = path.join(process.cwd(), "data", "uploads", "default.png");
+    if (!exists && safeName.endsWith('.webp')) {
+      filePath = join(process.cwd(), "data", "uploads", "default.png");
       file = Bun.file(filePath);
       exists = await file.exists();
     }
@@ -335,7 +353,7 @@ app.get("/public/:filename", async (req, res) => {
     }
     
     // Determine content type based on extension
-    const ext = path.extname(filename).toLowerCase();
+    const ext = extname(safeName).toLowerCase();
     const contentTypes = {
       '.jpeg': 'image/jpeg',
       '.jpg': 'image/jpeg', 
@@ -347,18 +365,18 @@ app.get("/public/:filename", async (req, res) => {
     const contentType = contentTypes[ext] || 'application/octet-stream';
     
     // CORS handling: Use wildcard in dev, specific origins in production
-    const corsOrigins = process.env.CORS_ALLOWED_ORIGINS || '*';
+    const corsOrigins = process.env.CORS_ALLOWED_ORIGINS || "*";
     const origin = req.headers.origin;
     
     // If specific origins are configured and request has origin, validate it
-    let allowOrigin = '*';
-    if (corsOrigins !== '*' && origin) {
-      const allowedList = corsOrigins.split(',').map(o => o.trim());
+    let allowOrigin = "*";
+    if (corsOrigins !== "*" && origin) {
+      const allowedList = corsOrigins.split(",").map(o => o.trim());
       if (allowedList.includes(origin)) {
         allowOrigin = origin;
       }
-    } else if (corsOrigins === '*') {
-      allowOrigin = '*';
+    } else if (corsOrigins === "*") {
+      allowOrigin = "*";
     }
     
     // Read file and send with proper headers using Fastify methods
