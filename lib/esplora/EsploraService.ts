@@ -65,6 +65,7 @@ const CACHE_TTL = {
   TIP_HEIGHT: 10,     // Block tip (updates frequently)
   TX_CONFIRMED: 300,  // Confirmed transactions (very stable)
   BLOCK_HEADER: 300,  // Block header (stable)
+  SERVER_RECIPIENT: 300, // Breez server recipient (stable)
 };
 
 // Stale cache TTL multiplier to allow serving data during extended upstream issues.
@@ -372,6 +373,11 @@ export class EsploraService {
     return headers;
   }
 
+  private getLiquidRootUrl(network: Network = "liquid"): string {
+    const base = this.getBaseUrl(network);
+    return base.replace(/\/api\/?$/, "");
+  }
+
   private async fetchWithTimeout(
     url: string,
     options: RequestInit,
@@ -444,6 +450,27 @@ export class EsploraService {
     const url = `${base}/waterfalls/waterfalls${query}`;
     const headers = await this.buildHeaders(accept);
     return this.fetchWithTimeout(url, { headers });
+  }
+
+  async fetchLiquidWaterfallsV2(
+    queryString: string | undefined,
+    network: Network = "liquid",
+    accept: string = "application/json"
+  ): Promise<Response> {
+    const base = this.getLiquidRootUrl(network).replace(/\/+$/, "");
+    const query = queryString ? `?${queryString}` : "";
+    const url = `${base}/v2/waterfalls${query}`;
+    const headers = await this.buildHeaders(accept);
+    return this.fetchWithTimeout(url, { headers });
+  }
+
+  async getLiquidServerRecipient(
+    network: Network = "liquid"
+  ): Promise<any> {
+    const base = this.getLiquidRootUrl(network).replace(/\/+$/, "");
+    const url = `${base}/v1/server_recipient`;
+    const cacheKey = `esplora:server_recipient:${network}`;
+    return this.fetchWithRetry<any>(url, cacheKey, CACHE_TTL.SERVER_RECIPIENT, 1);
   }
 
   private async fetchWithRetry<T>(
@@ -1213,6 +1240,11 @@ export class EsploraService {
     consecutiveErrors: number;
     inFlightCount: number;
     endpointStats: Record<string, EndpointStats>;
+    upstreams: {
+      bitcoin: string;
+      liquid: string;
+      authEnabled: boolean;
+    };
   } {
     const endpointStats: Record<string, EndpointStats> = {};
     for (const [key, value] of this.metrics.entries()) {
@@ -1238,6 +1270,11 @@ export class EsploraService {
       consecutiveErrors: maxConsecutiveErrors,
       inFlightCount: inFlightRequests.size,
       endpointStats,
+      upstreams: {
+        bitcoin: this.config.bitcoinUrl,
+        liquid: this.config.liquidUrl,
+        authEnabled: !!this.auth,
+      },
     };
   }
 }

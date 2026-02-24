@@ -1133,6 +1133,88 @@ export const waterfalls = async (
   }
 };
 
+// Breez Liquid server recipient (used by SDK)
+export const liquidServerRecipient = async (
+  req: FastifyRequest<{ Params: NetworkParams }>,
+  res: FastifyReply
+) => {
+  try {
+    const network = ensureNetwork(req, res);
+    if (!network) return;
+    if (network !== "liquid" && network !== "liquidtestnet") {
+      return sendError(
+        req,
+        res,
+        400,
+        "INVALID_NETWORK",
+        "Server recipient only supported for Liquid networks"
+      );
+    }
+
+    const esplora = getEsploraService();
+    const data = await esplora.getLiquidServerRecipient(network);
+    return res.send(data);
+  } catch (error) {
+    console.error("[Esplora Route] liquidServerRecipient error:", error);
+    return handleEsploraError(
+      req,
+      res,
+      error,
+      "ESPLORA_SERVER_RECIPIENT_FAILED",
+      "Failed to fetch server recipient"
+    );
+  }
+};
+
+// Breez Waterfalls v2 (Liquid only)
+export const liquidWaterfallsV2 = async (
+  req: FastifyRequest<{ Params: NetworkParams; Querystring: WaterfallsQuery }>,
+  res: FastifyReply
+) => {
+  try {
+    const network = ensureNetwork(req, res);
+    if (!network) return;
+    if (network !== "liquid" && network !== "liquidtestnet") {
+      return sendError(
+        req,
+        res,
+        400,
+        "INVALID_NETWORK",
+        "Waterfalls v2 only supported for Liquid networks"
+      );
+    }
+
+    const acceptHeader = req.headers["accept"];
+    const accept =
+      typeof acceptHeader === "string" && acceptHeader.includes("application/cbor")
+        ? "application/cbor"
+        : "application/json";
+
+    const queryString = req.raw.url?.split("?")[1];
+    const esplora = getEsploraService();
+    const upstream = await esplora.fetchLiquidWaterfallsV2(
+      queryString,
+      network,
+      accept
+    );
+
+    const contentType = upstream.headers.get("content-type") || accept;
+    res.header("content-type", contentType);
+    const body = Buffer.from(await upstream.arrayBuffer());
+
+    return res.code(upstream.status).send(body);
+  } catch (error) {
+    console.error("[Esplora Route] liquidWaterfallsV2 error:", error);
+    return handleEsploraError(
+      req,
+      res,
+      error,
+      "ESPLORA_WATERFALLS_V2_FAILED",
+      "Failed to fetch waterfalls v2 data"
+    );
+  }
+};
+
 export default {
   txStatus,
   tx,
@@ -1154,4 +1236,6 @@ export default {
   feeEstimates,
   stats,
   waterfalls,
+  liquidServerRecipient,
+  liquidWaterfallsV2,
 };
