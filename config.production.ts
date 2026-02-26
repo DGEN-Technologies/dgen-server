@@ -69,6 +69,6 @@ export default {
   security: {
     enforceHTTPS: true,
     trustProxy: process.env.TRUST_PROXY === 'true',
-    sessionSecret: process.env.SESSION_SECRET || process.env.JWT_SECRET
+    sessionSecret: process.env.SESSION_SECRET || (() => { throw new Error("SESSION_SECRET environment variable is required in production") })()
   }
 };

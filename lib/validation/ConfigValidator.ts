@@ -28,7 +28,12 @@ export function validateConfiguration(): void {
     process.env.BUN_ENV === 'test' ||
     process.env.BUN_TEST === 'true' ||
     process.env.BUN_WORKER_ID !== undefined ||
-    process.argv.some(arg => arg.includes('test'));
+    process.argv.some((arg) =>
+      arg === 'test' ||
+      arg.startsWith('--test') ||
+      arg.startsWith('-test') ||
+      ['jest', 'mocha', 'ava'].includes(arg),
+    );
   if (isTestEnv && !process.env.PORT) {
     process.env.PORT = '3119';
   }
@@ -73,7 +78,7 @@ export function validateConfiguration(): void {
     validateProductionSpecific(errors, warnings);
   }
 
-  if (errors.length > 0) {
+  if (errors.length > 0 || numericEnvErrors.length > 0) {
     console.error('\n❌ CONFIGURATION ERRORS:');
     errors.forEach(error => console.error(`  - ${error}`));
     numericEnvErrors.forEach(error => console.error(`  - ${error}`));
@@ -171,7 +176,7 @@ function validateDatabaseUrls(errors: string[]): void {
 
 export function enforceHTTPS(): void {
   const env = process.env.NODE_ENV;
-  if (env === 'production' && !process.env.HTTPS) {
+  if (env === 'production' && process.env.HTTPS !== 'true') {
     console.error('❌ HTTPS must be enabled in production');
     exit(1);
   }
