@@ -67,7 +67,7 @@ export const notify = async (p, user, withdrawal) => {
       .sendNotification(JSON.parse(s), JSON.stringify(payload))
       .catch((e) => {
         warn("sub failed", e.message);
-        db.sRem(`${user.id}:subscriptions`, s);
+        safeDb.sRem(`${user.id}:subscriptions`, s);
       });
   }
 

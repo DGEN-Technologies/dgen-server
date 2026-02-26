@@ -9,10 +9,16 @@ const config = getConfig();
 const REDIS_TIMEOUT_MS = 5000;
 
 function withTimeout<T>(promise: Promise<T>, operation: string): Promise<T> {
-  const timeout = new Promise<never>((_, reject) =>
-    setTimeout(() => reject(new Error(`Redis timeout: ${operation}`)), REDIS_TIMEOUT_MS)
-  );
-  return Promise.race([promise, timeout]);
+  let timeoutId: ReturnType<typeof setTimeout> | null = null;
+  const timeout = new Promise<never>((_, reject) => {
+    timeoutId = setTimeout(
+      () => reject(new Error(`Redis timeout: ${operation}`)),
+      REDIS_TIMEOUT_MS,
+    );
+  });
+  return Promise.race([promise, timeout]).finally(() => {
+    if (timeoutId) clearTimeout(timeoutId);
+  });
 }
 
 const DEBIT = `
@@ -161,7 +167,9 @@ export async function g(k: string): Promise<any> {
 
 export function s(k: string, v: any): void {
   if (k === "user:null" || k === "user:undefined") fail("null user");
-  withTimeout(db.set(k, JSON.stringify(v)), `set ${k}`).catch(() => {});
+  withTimeout(db.set(k, JSON.stringify(v)), `set ${k}`).catch((error) => {
+    err("redis write failed (s)", k, error?.message || error);
+  });
 }
 
 export async function ga(k: string): Promise<any> {
@@ -178,7 +186,9 @@ export function sa(k: string, v: any): void {
     warn("###### NULL USER #######");
     console.trace();
   }
-  withTimeout(archive.set(k, JSON.stringify(v)), `archive set ${k}`).catch(() => {});
+  withTimeout(archive.set(k, JSON.stringify(v)), `archive set ${k}`).catch((error) => {
+    err("redis archive write failed (sa)", k, error?.message || error);
+  });
 }
 
 const retries: Record<string, number> = {};
@@ -220,9 +230,13 @@ export const safeDb = {
   lLen: (key: string) => withTimeout(db.lLen(key), `lLen ${key}`),
 
   // Key operations
+  get: (key: string) => withTimeout(db.get(key), `get ${key}`),
   exists: (key: string) => withTimeout(db.exists(key), `exists ${key}`),
-  del: (key: string) => withTimeout(db.del(key), `del ${key}`),
+  del: (key: string, ...keys: string[]) =>
+    withTimeout(db.del(key, ...keys), `del ${key}`),
   set: (key: string, value: string, options?: any) => withTimeout(db.set(key, value, options), `set ${key}`),
+  setEx: (key: string, ttlSeconds: number, value: string) =>
+    withTimeout(db.setEx(key, ttlSeconds, value), `setEx ${key}`),
 
   // Hash operations
   hSet(key: string, field: string | Record<string, string>, value?: string) {
