@@ -203,26 +203,44 @@ const esploraRateLimit = {
   },
 };
 
-app.get("/api/esplora/tx/:txid/status", esploraRateLimit, esplora.txStatus);
-app.get("/api/esplora/tx/:txid", esploraRateLimit, esplora.tx);
-app.get("/api/esplora/tx/:txid/hex", esploraRateLimit, esplora.txHex);
-app.get("/api/esplora/tx/:txid/raw", esploraRateLimit, esplora.txRaw);
-app.get("/api/esplora/address/:address/utxo", esploraRateLimit, esplora.addressUtxo);
-app.get("/api/esplora/scripthash/:hash/utxo", esploraRateLimit, esplora.scripthashUtxo);
-app.get("/api/esplora/address/:address/txs", esploraRateLimit, esplora.addressTxs);
-app.get("/api/esplora/address/:address/txs/chain", esploraRateLimit, esplora.addressTxsConfirmed);
-app.get("/api/esplora/address/:address/txs/mempool", esploraRateLimit, esplora.addressTxsMempool);
-app.get("/api/esplora/scripthash/:hash/txs", esploraRateLimit, esplora.scripthashTxs);
-app.get("/api/esplora/scripthash/:hash/txs/chain", esploraRateLimit, esplora.scripthashTxsConfirmed);
-app.get("/api/esplora/scripthash/:hash/txs/mempool", esploraRateLimit, esplora.scripthashTxsMempool);
-app.get("/api/esplora/blocks/tip/height", esploraRateLimit, esplora.tipHeight);
-app.get("/api/esplora/blocks/tip/hash", esploraRateLimit, esplora.tipHash);
-app.get("/api/esplora/block/:hash/header", esploraRateLimit, esplora.blockHeader);
-app.get("/api/esplora/block-height/:height", esploraRateLimit, esplora.blockHeight);
-app.get("/api/esplora/fee-estimates", esploraRateLimit, esplora.feeEstimates);
-app.post("/api/esplora/tx", esploraRateLimit, esplora.broadcast);
+const esploraRoutes: Array<{
+  method: "get" | "post";
+  path: string;
+  handler: any;
+}> = [
+  { method: "get", path: "tx/:txid/status", handler: esplora.txStatus },
+  { method: "get", path: "tx/:txid", handler: esplora.tx },
+  { method: "get", path: "tx/:txid/hex", handler: esplora.txHex },
+  { method: "get", path: "tx/:txid/raw", handler: esplora.txRaw },
+  { method: "get", path: "address/:address/utxo", handler: esplora.addressUtxo },
+  { method: "get", path: "scripthash/:hash/utxo", handler: esplora.scripthashUtxo },
+  { method: "get", path: "address/:address/txs", handler: esplora.addressTxs },
+  { method: "get", path: "address/:address/txs/chain", handler: esplora.addressTxsConfirmed },
+  { method: "get", path: "address/:address/txs/mempool", handler: esplora.addressTxsMempool },
+  { method: "get", path: "scripthash/:hash/txs", handler: esplora.scripthashTxs },
+  { method: "get", path: "scripthash/:hash/txs/chain", handler: esplora.scripthashTxsConfirmed },
+  { method: "get", path: "scripthash/:hash/txs/mempool", handler: esplora.scripthashTxsMempool },
+  { method: "get", path: "blocks/tip/height", handler: esplora.tipHeight },
+  { method: "get", path: "blocks/tip/hash", handler: esplora.tipHash },
+  { method: "get", path: "block/:hash/header", handler: esplora.blockHeader },
+  { method: "get", path: "block-height/:height", handler: esplora.blockHeight },
+  { method: "get", path: "fee-estimates", handler: esplora.feeEstimates },
+  { method: "post", path: "tx", handler: esplora.broadcast },
+  { method: "get", path: "waterfalls/waterfalls", handler: esplora.waterfalls },
+];
+
+const esploraPrefixes = ["/api/esplora", "/api/esplora/:network"];
+for (const prefix of esploraPrefixes) {
+  for (const route of esploraRoutes) {
+    app[route.method](
+      `${prefix}/${route.path}`,
+      esploraRateLimit,
+      route.handler,
+    );
+  }
+}
+
 app.get("/api/esplora/stats", auth, esplora.stats);
-app.get("/api/esplora/waterfalls/waterfalls", esploraRateLimit, esplora.waterfalls);
 app.get(
   "/api/esplora/liquid/v1/server_recipient",
   esploraRateLimit,
@@ -233,27 +251,6 @@ app.get(
   esploraRateLimit,
   esplora.liquidWaterfallsV2
 );
-
-// Network-prefixed Esplora endpoints (for SDK compatibility)
-app.get("/api/esplora/:network/tx/:txid/status", esploraRateLimit, esplora.txStatus);
-app.get("/api/esplora/:network/tx/:txid", esploraRateLimit, esplora.tx);
-app.get("/api/esplora/:network/tx/:txid/hex", esploraRateLimit, esplora.txHex);
-app.get("/api/esplora/:network/tx/:txid/raw", esploraRateLimit, esplora.txRaw);
-app.get("/api/esplora/:network/address/:address/utxo", esploraRateLimit, esplora.addressUtxo);
-app.get("/api/esplora/:network/scripthash/:hash/utxo", esploraRateLimit, esplora.scripthashUtxo);
-app.get("/api/esplora/:network/address/:address/txs", esploraRateLimit, esplora.addressTxs);
-app.get("/api/esplora/:network/address/:address/txs/chain", esploraRateLimit, esplora.addressTxsConfirmed);
-app.get("/api/esplora/:network/address/:address/txs/mempool", esploraRateLimit, esplora.addressTxsMempool);
-app.get("/api/esplora/:network/scripthash/:hash/txs", esploraRateLimit, esplora.scripthashTxs);
-app.get("/api/esplora/:network/scripthash/:hash/txs/chain", esploraRateLimit, esplora.scripthashTxsConfirmed);
-app.get("/api/esplora/:network/scripthash/:hash/txs/mempool", esploraRateLimit, esplora.scripthashTxsMempool);
-app.get("/api/esplora/:network/blocks/tip/height", esploraRateLimit, esplora.tipHeight);
-app.get("/api/esplora/:network/blocks/tip/hash", esploraRateLimit, esplora.tipHash);
-app.get("/api/esplora/:network/block/:hash/header", esploraRateLimit, esplora.blockHeader);
-app.get("/api/esplora/:network/block-height/:height", esploraRateLimit, esplora.blockHeight);
-app.get("/api/esplora/:network/fee-estimates", esploraRateLimit, esplora.feeEstimates);
-app.post("/api/esplora/:network/tx", esploraRateLimit, esplora.broadcast);
-app.get("/api/esplora/:network/waterfalls/waterfalls", esploraRateLimit, esplora.waterfalls);
 app.get(
   "/api/esplora/:network/v1/server_recipient",
   esploraRateLimit,
@@ -340,12 +337,14 @@ app.get("/public/:filename", async (req, res) => {
   try {
     let file = Bun.file(filePath);
     let exists = await file.exists();
+    let ext = extname(filePath).toLowerCase();
     
     // If file doesn't exist and it's a .webp file, serve the default image
     if (!exists && safeName.endsWith('.webp')) {
       filePath = join(process.cwd(), "data", "uploads", "default.png");
       file = Bun.file(filePath);
       exists = await file.exists();
+      ext = extname(filePath).toLowerCase();
     }
     
     if (!exists) {
@@ -353,7 +352,6 @@ app.get("/public/:filename", async (req, res) => {
     }
     
     // Determine content type based on extension
-    const ext = extname(safeName).toLowerCase();
     const contentTypes = {
       '.jpeg': 'image/jpeg',
       '.jpg': 'image/jpeg', 
@@ -369,27 +367,29 @@ app.get("/public/:filename", async (req, res) => {
     const origin = req.headers.origin;
     
     // If specific origins are configured and request has origin, validate it
-    let allowOrigin = "*";
-    if (corsOrigins !== "*" && origin) {
+    let allowOrigin: string | undefined;
+    if (corsOrigins === "*") {
+      allowOrigin = "*";
+    } else if (origin) {
       const allowedList = corsOrigins.split(",").map(o => o.trim());
       if (allowedList.includes(origin)) {
         allowOrigin = origin;
       }
-    } else if (corsOrigins === "*") {
-      allowOrigin = "*";
     }
     
     // Read file and send with proper headers using Fastify methods
     const buffer = await file.arrayBuffer();
-    res
+    const reply = res
       .header('Content-Type', contentType)
       .header('Cache-Control', 'public, max-age=3600')
       .header('Content-Length', buffer.byteLength)
-      .header('Access-Control-Allow-Origin', allowOrigin)
       .header('Access-Control-Allow-Methods', 'GET')
       .header('Access-Control-Allow-Headers', 'Content-Type')
-      .header('Cross-Origin-Resource-Policy', 'cross-origin')
-      .send(Buffer.from(buffer));
+      .header('Cross-Origin-Resource-Policy', 'cross-origin');
+    if (allowOrigin) {
+      reply.header('Access-Control-Allow-Origin', allowOrigin);
+    }
+    reply.send(Buffer.from(buffer));
   } catch (error) {
     console.error("Error serving file:", error);
     res.code(500).send("Error serving file");

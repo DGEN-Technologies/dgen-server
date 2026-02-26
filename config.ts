@@ -8,14 +8,15 @@ const parseIntStrict = (value: string | undefined, fallback: number): number => 
 
 const port = parseIntStrict(process.env.PORT, 3119);
 const isProd = process.env.NODE_ENV === "production";
-const defaultJwtSecret =
+const defaultJwtSecret = // development-only fallback; not used in production (guarded by isProd)
   "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
 const defaultAdminPassword = "change-this-admin-password";
 
 const jwtSecret = process.env.JWT_SECRET || (isProd ? "" : defaultJwtSecret);
 const adminPassword =
   process.env.ADMIN_PASSWORD || (isProd ? "" : defaultAdminPassword);
-const sessionSecret = process.env.SESSION_SECRET || jwtSecret;
+const sessionSecret =
+  process.env.SESSION_SECRET || (isProd ? "" : jwtSecret);
 
 if (isProd && !jwtSecret) {
   throw new Error("JWT_SECRET is required in production");
@@ -27,18 +28,20 @@ if (isProd && !sessionSecret) {
   throw new Error("SESSION_SECRET is required in production");
 }
 
+const buildRedisUrl = (): string => {
+  const protocol = process.env.REDIS_TLS === 'true' ? 'rediss' : 'redis';
+  if (process.env.REDIS_PASSWORD) {
+    return `${protocol}://:${process.env.REDIS_PASSWORD}@localhost:6379`;
+  }
+  return `${protocol}://localhost:6379`;
+};
+
 export default {
   port,
   url: process.env.URL || `http://localhost:${port}`,
-  archive: process.env.REDIS_PASSWORD
-    ? `${process.env.REDIS_TLS === 'true' ? 'rediss' : 'redis'}://:${process.env.REDIS_PASSWORD}@localhost:6379`
-    : (process.env.REDIS_TLS === 'true' ? 'rediss://localhost:6379' : 'redis://localhost:6379'),
-  arc2: process.env.REDIS_PASSWORD
-    ? `${process.env.REDIS_TLS === 'true' ? 'rediss' : 'redis'}://:${process.env.REDIS_PASSWORD}@localhost:6379`
-    : (process.env.REDIS_TLS === 'true' ? 'rediss://localhost:6379' : 'redis://localhost:6379'),
-  db: process.env.REDIS_PASSWORD
-    ? `${process.env.REDIS_TLS === 'true' ? 'rediss' : 'redis'}://:${process.env.REDIS_PASSWORD}@localhost:6379`
-    : (process.env.REDIS_TLS === 'true' ? 'rediss://localhost:6379' : 'redis://localhost:6379'),
+  archive: buildRedisUrl(),
+  arc2: buildRedisUrl(),
+  db: buildRedisUrl(),
   // nostr: "wss://relay.primal.net", // Nostr disabled for MVP
   // relays: [
   //   "ws://nostr:8080",

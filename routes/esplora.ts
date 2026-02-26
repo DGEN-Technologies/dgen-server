@@ -266,13 +266,25 @@ const validateWaterfallsQuery = (
   req: FastifyRequest<{ Querystring: WaterfallsQuery }>,
   res: FastifyReply
 ): boolean => {
-  const { addresses, descriptor } = req.query || {};
+  const { addresses, descriptor, page, to_index, utxo_only } = req.query || {};
   if (addresses && addresses.length > MAX_WATERFALLS_QUERY_LENGTH) {
     sendError(req, res, 400, "INVALID_ADDRESSES", "Addresses list too long");
     return false;
   }
   if (descriptor && descriptor.length > MAX_WATERFALLS_QUERY_LENGTH) {
     sendError(req, res, 400, "INVALID_DESCRIPTOR", "Descriptor too long");
+    return false;
+  }
+  if (page && !/^\d+$/.test(page)) {
+    sendError(req, res, 400, "INVALID_PAGE", "Invalid page parameter");
+    return false;
+  }
+  if (to_index && !/^\d+$/.test(to_index)) {
+    sendError(req, res, 400, "INVALID_TO_INDEX", "Invalid to_index parameter");
+    return false;
+  }
+  if (utxo_only && !["1", "0", "true", "false"].includes(utxo_only)) {
+    sendError(req, res, 400, "INVALID_UTXO_ONLY", "Invalid utxo_only parameter");
     return false;
   }
   if (addresses) {
@@ -292,6 +304,32 @@ const validateWaterfallsQuery = (
     }
   }
   return true;
+};
+
+const buildWaterfallsQuery = (query: WaterfallsQuery = {}): string => {
+  const params = new URLSearchParams();
+  if (query.descriptor) {
+    params.set("descriptor", query.descriptor);
+  }
+  if (query.addresses) {
+    const list = query.addresses
+      .split(",")
+      .map((entry) => entry.trim())
+      .filter(Boolean);
+    if (list.length > 0) {
+      params.set("addresses", list.join(","));
+    }
+  }
+  if (query.page) {
+    params.set("page", query.page);
+  }
+  if (query.to_index) {
+    params.set("to_index", query.to_index);
+  }
+  if (query.utxo_only) {
+    params.set("utxo_only", query.utxo_only);
+  }
+  return params.toString();
 };
 
 export const handleEsploraError = (
@@ -1142,7 +1180,7 @@ export const waterfalls = async (
         ? "application/cbor"
         : "application/json";
 
-    const queryString = req.raw.url?.split("?")[1];
+    const queryString = buildWaterfallsQuery(req.query || {});
     const esplora = getEsploraService();
     const upstream = await esplora.fetchWaterfalls(queryString, network, accept);
 
@@ -1221,7 +1259,7 @@ export const liquidWaterfallsV2 = async (
         ? "application/cbor"
         : "application/json";
 
-    const queryString = req.raw.url?.split("?")[1];
+    const queryString = buildWaterfallsQuery(req.query || {});
     const esplora = getEsploraService();
     const upstream = await esplora.fetchLiquidWaterfallsV2(
       queryString,

@@ -1,5 +1,5 @@
 import { createHash } from "crypto";
-import { db } from "../db";
+import { safeDb } from "../db";
 import { BlockstreamAuth } from "./BlockstreamAuth";
 
 interface EsploraConfig {
@@ -269,7 +269,7 @@ export class EsploraService {
 
   private async getTipGateMarker(cacheKey: string): Promise<string | null> {
     try {
-      const marker = await db.get(`${cacheKey}:tip`);
+      const marker = await safeDb.get(`${cacheKey}:tip`);
       return marker ?? null;
     } catch (error) {
       console.warn(`[Esplora] Tip gate marker read error for ${cacheKey}:`, error);
@@ -279,7 +279,7 @@ export class EsploraService {
 
   private async setTipGateMarker(cacheKey: string, tipHash: string, ttlSeconds: number): Promise<void> {
     try {
-      await db.setEx(`${cacheKey}:tip`, ttlSeconds, tipHash);
+      await safeDb.setEx(`${cacheKey}:tip`, ttlSeconds, tipHash);
     } catch (error) {
       console.warn(`[Esplora] Tip gate marker write error for ${cacheKey}:`, error);
     }
@@ -287,7 +287,7 @@ export class EsploraService {
 
   private async clearTipGateMarker(cacheKey: string): Promise<void> {
     try {
-      await db.del(`${cacheKey}:tip`);
+      await safeDb.del(`${cacheKey}:tip`);
     } catch (error) {
       console.warn(`[Esplora] Tip gate marker delete error for ${cacheKey}:`, error);
     }
@@ -929,7 +929,7 @@ export class EsploraService {
 
   private async getFromCache<T>(key: string): Promise<T | null> {
     try {
-      const cached = await db.get(key);
+      const cached = await safeDb.get(key);
       if (cached) {
         const parsed = JSON.parse(cached);
         if (parsed && typeof parsed === "object") {
@@ -950,7 +950,7 @@ export class EsploraService {
 
   private async getFromStaleCache<T>(key: string): Promise<T | null> {
     try {
-      const cached = await db.get(`${key}:stale`);
+      const cached = await safeDb.get(`${key}:stale`);
       if (cached) {
         const parsed = JSON.parse(cached);
         if (parsed && typeof parsed === "object") {
@@ -975,8 +975,8 @@ export class EsploraService {
         typeof data === "string"
           ? JSON.stringify({ [TEXT_CACHE_KEY]: data })
           : JSON.stringify(data);
-      await db.setEx(key, ttlSeconds, payload);
-      await db.setEx(
+      await safeDb.setEx(key, ttlSeconds, payload);
+      await safeDb.setEx(
         `${key}:stale`,
         ttlSeconds * STALE_TTL_MULTIPLIER,
         payload
@@ -988,7 +988,7 @@ export class EsploraService {
 
   private async deleteCache(key: string): Promise<void> {
     try {
-      await db.del(key, `${key}:stale`);
+      await safeDb.del(key, `${key}:stale`);
     } catch (error) {
       console.warn(`[Esplora] Cache delete error for ${key}:`, error);
     }
@@ -1332,6 +1332,15 @@ export class EsploraService {
       authEnabled: boolean;
     };
   } {
+    const sanitizeUrl = (value: string): string => {
+      try {
+        const parsed = new URL(value);
+        return parsed.host;
+      } catch {
+        return "unknown";
+      }
+    };
+
     const endpointStats: Record<string, EndpointStats> = {};
     for (const [key, value] of this.metrics.entries()) {
       endpointStats[key] = value;
@@ -1357,8 +1366,8 @@ export class EsploraService {
       inFlightCount: inFlightRequests.size,
       endpointStats,
       upstreams: {
-        bitcoin: this.config.bitcoinUrl,
-        liquid: this.config.liquidUrl,
+        bitcoin: sanitizeUrl(this.config.bitcoinUrl),
+        liquid: sanitizeUrl(this.config.liquidUrl),
         authEnabled: !!this.auth,
       },
     };

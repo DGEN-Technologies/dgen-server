@@ -356,6 +356,7 @@ export default {
   },
 
   async login(req, res) {
+    let ip: string | null = null;
     try {
       let { username, password, token: twofa } = req.body;
 
@@ -365,7 +366,7 @@ export default {
       }
       username = usernameValidation.sanitized;
 
-      const ip = getClientIp(req);
+      ip = getClientIp(req);
       if (!ip) {
         return res.code(400).send({ error: "Client IP unavailable" });
       }
@@ -410,7 +411,7 @@ export default {
       user = pick(user, whitelist);
       res.send({ user, token });
     } catch (e) {
-      err("login error", e.message, req.socket.remoteAddress);
+      err("login error", e.message, ip || req.socket.remoteAddress);
       res.code(401).send({});
     }
   },
@@ -422,9 +423,9 @@ export default {
   },
 
   async nostrAuth(req, res) {
+    const ip = getClientIp(req);
     try {
       const { event, challenge } = req.body;
-      const ip = getClientIp(req);
       if (!ip) {
         return res.code(400).send({ error: "Client IP unavailable" });
       }
@@ -479,7 +480,7 @@ export default {
       user = pick(user, whitelist);
       res.send({ user, token });
     } catch (e) {
-      err("login error", e.message, req.socket.remoteAddress);
+      err("login error", e.message, ip || req.socket.remoteAddress);
       res.code(401).send({});
     }
   },
@@ -567,10 +568,8 @@ export default {
     await safeDb.set(`${id}:lastlen`, String(len));
 
     let contacts = (await g(`${id}:contacts`)) || [];
-    const pins = await safeDb.sMembers(`${id}:pins`);
-    const pinsArray = Array.isArray(pins) ? pins : Array.from(pins);
-    const trust = await safeDb.sMembers(`${id}:trust`);
-    const trustArray = Array.isArray(trust) ? trust : Array.from(trust);
+    const pinsArray = await safeDb.sMembers(`${id}:pins`);
+    const trustArray = await safeDb.sMembers(`${id}:trust`);
 
     for (const { ref } of (
       await Promise.all(
@@ -662,7 +661,7 @@ export default {
       "password reset",
       user.username,
       code,
-      getClientIp(req),
+      getClientIp(req) ?? "unknown",
     );
 
     try {

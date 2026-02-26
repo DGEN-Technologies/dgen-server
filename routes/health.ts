@@ -1,6 +1,6 @@
 import { FastifyRequest, FastifyReply } from 'fastify';
 import { initializeServices } from '../lib/services';
-import { safeDb } from '../lib/db';
+import { db, safeDb } from '../lib/db';
 import { AlertManager } from '../lib/monitoring/AlertManager';
 import { MetricsCollector } from '../lib/monitoring/MetricsCollector';
 import { websocketManager } from '../lib/websocket/WebSocketManager';
@@ -34,7 +34,7 @@ const startTime = Date.now();
 async function checkDatabase(): Promise<HealthCheckComponent> {
   const start = Date.now();
   try {
-    await safeDb.ping();
+    await db.ping();
     return {
       name: 'database',
       status: 'healthy',
@@ -99,7 +99,7 @@ async function checkWebSocket(): Promise<HealthCheckComponent> {
     const poolUtilization = (poolStats.total / poolStats.maxConnections) * 100;
 
     function getStatus(): 'healthy' | 'degraded' | 'unhealthy' {
-      const isHealthy = stats.totalConnections >= 0 && poolUtilization < 90;
+      const isHealthy = stats.totalConnections >= 0 && poolUtilization < 80;
       if (isHealthy) return 'healthy';
       if (poolUtilization >= 80 && poolUtilization < 90) return 'degraded';
       return 'unhealthy';
