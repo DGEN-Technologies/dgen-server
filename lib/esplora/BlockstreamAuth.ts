@@ -5,6 +5,7 @@ type TokenResponse = {
 };
 
 const TOKEN_REQUEST_TIMEOUT_MS = 5000;
+const TOKEN_EXP_SKEW_MS = 60_000; // Refresh 60s early to avoid edge expiry
 
 export class BlockstreamAuth {
   private token: string | null = null;
@@ -77,6 +78,27 @@ export class BlockstreamAuth {
     return this.inFlight;
   }
 
+  invalidateToken(): void {
+    this.token = null;
+    this.expiresAt = 0;
+  }
+
+  private parseJwtExpiry(token: string): number | null {
+    const parts = token.split(".");
+    if (parts.length < 2) return null;
+    const payload = parts[1].replace(/-/g, "+").replace(/_/g, "/");
+    const padded = payload.padEnd(payload.length + ((4 - (payload.length % 4)) % 4), "=");
+    try {
+      const json = JSON.parse(Buffer.from(padded, "base64").toString("utf8"));
+      if (typeof json?.exp === "number") {
+        return json.exp * 1000;
+      }
+    } catch {
+      return null;
+    }
+    return null;
+  }
+
   private async fetchToken(): Promise<string> {
     try {
       const body = new URLSearchParams({
@@ -132,7 +154,16 @@ export class BlockstreamAuth {
       }
 
       this.token = token;
-      this.expiresAt = Date.now() + Math.max(expiresIn - refreshSkew, 30) * 1000;
+      const expMs = this.parseJwtExpiry(token);
+      if (expMs) {
+        const adjusted = expMs - TOKEN_EXP_SKEW_MS;
+        if (adjusted <= Date.now()) {
+          throw new Error("Blockstream token already expired");
+        }
+        this.expiresAt = adjusted;
+      } else {
+        this.expiresAt = Date.now() + Math.max(expiresIn - refreshSkew, 30) * 1000;
+      }
       this.lastError = null;
       this.lastErrorAt = 0;
 

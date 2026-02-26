@@ -134,6 +134,14 @@ const validateEsploraUrl = (value: string, label: string): void => {
   }
 };
 
+const isEnterpriseUrl = (value: string): boolean => {
+  try {
+    return new URL(value).hostname.includes("enterprise.blockstream.info");
+  } catch {
+    return false;
+  }
+};
+
 export class EsploraService {
   private static instance: EsploraService | null = null;
   private config: EsploraConfig;
@@ -185,6 +193,21 @@ export class EsploraService {
       validateEsploraUrl(tokenUrl, "BLOCKSTREAM_TOKEN_URL");
       const scope = process.env.BLOCKSTREAM_SCOPE?.trim() || "openid";
       this.auth = new BlockstreamAuth(tokenUrl, clientId, clientSecret, scope);
+    }
+
+    if (!this.auth) {
+      if (isEnterpriseUrl(this.config.bitcoinUrl)) {
+        console.warn(
+          "[EsploraService] BITCOIN_ESPLORA_URL points to enterprise but no OAuth credentials configured; falling back to public endpoint."
+        );
+        this.config.bitcoinUrl = "https://blockstream.info/api";
+      }
+      if (isEnterpriseUrl(this.config.liquidUrl)) {
+        console.warn(
+          "[EsploraService] LIQUID_ESPLORA_URL points to enterprise but no OAuth credentials configured; falling back to public endpoint."
+        );
+        this.config.liquidUrl = "https://blockstream.info/liquid/api";
+      }
     }
 
     this.tipGateScripthashUtxo = process.env.ESPLORA_TIP_GATE_SCRIPTHASH_UTXO !== "false";
@@ -754,6 +777,16 @@ export class EsploraService {
         }
 
         if (!response.ok) {
+          if (useAuth && this.auth && (response.status === 401 || response.status === 403)) {
+            console.warn(
+              `[Esplora] Auth rejected (${response.status}); refreshing token and retrying`
+            );
+            this.auth.invalidateToken();
+            lastError = new EsploraHttpError(response.status, response.statusText);
+            if (attempt < maxRetries - 1) {
+              continue;
+            }
+          }
           throw new EsploraHttpError(response.status, response.statusText);
         }
 
@@ -830,6 +863,16 @@ export class EsploraService {
         }
 
         if (!response.ok) {
+          if (useAuth && this.auth && (response.status === 401 || response.status === 403)) {
+            console.warn(
+              `[Esplora] Auth rejected (${response.status}); refreshing token and retrying`
+            );
+            this.auth.invalidateToken();
+            lastError = new EsploraHttpError(response.status, response.statusText);
+            if (attempt < maxRetries - 1) {
+              continue;
+            }
+          }
           throw new EsploraHttpError(response.status, response.statusText);
         }
 
