@@ -172,7 +172,7 @@ app.register(fastifyRateLimit, {
     return `ip:${ip}`;
   },
   errorResponseBuilder: (req) => {
-    const ip = req.ip;
+    const ip = getClientIp(req) || req.ip || "unknown";
     const ua = req.headers["user-agent"] || "unknown";
     const userId = req.user?.id || "anonymous";
 
@@ -203,8 +203,18 @@ app.register(fastifyRateLimit, {
 // WebSocket handling is now done directly through WebSocketManager
 // See lib/websocket/WebSocketManager.ts
 
+const sessionSecret = config.security?.sessionSecret || "";
+const sessionKey = (() => {
+  if (!sessionSecret) {
+    throw new Error("SESSION_SECRET is required for secure sessions");
+  }
+  const hexLike =
+    sessionSecret.length % 2 === 0 && /^[0-9a-fA-F]+$/.test(sessionSecret);
+  return Buffer.from(sessionSecret, hexLike ? "hex" : "utf8");
+})();
+
 app.register(fastifySecureSession, {
-  key: Buffer.from(getConfig().jwt, "hex"),
+  key: sessionKey,
 });
 
 app.register((fastifyPassport as any).initialize());
@@ -250,7 +260,7 @@ await app.register(cors, {
     if (!origin) return cb(null, true);
     
     // Always allow localhost origins for local development/testing
-    if (origin && isLocalOrigin(origin)) {
+    if (process.env.NODE_ENV !== "production" && origin && isLocalOrigin(origin)) {
       return cb(null, true);
     }
 

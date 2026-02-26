@@ -4,6 +4,8 @@ type TokenResponse = {
   token_type?: string;
 };
 
+const TOKEN_REQUEST_TIMEOUT_MS = 5000;
+
 export class BlockstreamAuth {
   private token: string | null = null;
   private expiresAt = 0;
@@ -84,18 +86,34 @@ export class BlockstreamAuth {
         scope: this.scope,
       });
 
-      const response = await fetch(this.tokenUrl, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/x-www-form-urlencoded",
-          "Accept": "application/json",
-        },
-        body,
-      });
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), TOKEN_REQUEST_TIMEOUT_MS);
+      let response: Response;
+      try {
+        response = await fetch(this.tokenUrl, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/x-www-form-urlencoded",
+            "Accept": "application/json",
+          },
+          body,
+          signal: controller.signal,
+        });
+      } catch (error: any) {
+        if (error?.name === "AbortError") {
+          throw new Error("Blockstream token request timed out");
+        }
+        throw error;
+      } finally {
+        clearTimeout(timeoutId);
+      }
 
       if (!response.ok) {
-        await response.text();
-        throw new Error(`Blockstream token request failed: ${response.status}`);
+        const detail = await response.text();
+        const snippet = detail ? detail.slice(0, 200) : "";
+        throw new Error(
+          `Blockstream token request failed: ${response.status}${snippet ? ` - ${snippet}` : ""}`
+        );
       }
 
       const data = (await response.json()) as TokenResponse;
@@ -107,6 +125,8 @@ export class BlockstreamAuth {
       const refreshSkew = Math.max(Math.floor(expiresIn * 0.1), 30);
 
       const token = data.access_token;
+      // Security validation: reject tokens with whitespace/control characters.
+      // biome-ignore lint/suspicious/noControlCharactersInRegex: deliberate validation for token safety
       if (/[\s\x00-\x1F\x7F]/.test(token)) {
         throw new Error("Blockstream token contains invalid characters");
       }

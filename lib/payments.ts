@@ -47,15 +47,16 @@ export const debit = async ({
 }) => {
   amount = parseInt(amount);
 
-  const whitelisted = await safeDb.sIsMember(
-    "whitelist",
-    user?.username?.toLowerCase().trim(),
-  );
+  const normalizedUsername = user?.username
+    ? user.username.toLowerCase().trim()
+    : null;
+  if (!normalizedUsername) {
+    fail("Invalid user");
+  }
 
-  const blacklisted = await safeDb.sIsMember(
-    "blacklist",
-    user?.username?.toLowerCase().trim(),
-  );
+  const whitelisted = await safeDb.sIsMember("whitelist", normalizedUsername);
+
+  const blacklisted = await safeDb.sIsMember("blacklist", normalizedUsername);
 
   const serverLimit = parseInt(await g(`${type}:limit`)) || 10000000; // Default high limit
   const userLimit = parseInt(await g("limit")) || 10000000; // Default high limit
@@ -471,7 +472,7 @@ export const sendLightning = async ({
   fee = undefined,
   memo = undefined,
 }) => {
-  console.log(`[TRACE] sendLightning called: amount=${amount}, pr=${pr?.substring(0, 50)}...`);
+  l("sendLightning invoked", user?.id, amount ? `amount=${amount}` : "");
   
   
   
@@ -486,177 +487,6 @@ export const sendLightning = async ({
     throw error;
   }
   
-  // OLD CODE BELOW - keeping for reference but not executing
-  return;
-  let p;
-
-  if (typeof amount !== "undefined") {
-    amount = parseInt(amount);
-    console.log(`[TRACE] Parsed amount: ${amount}`);
-    if (amount < 0 || amount > SATS || Number.isNaN(amount)) {
-      warn("invalid amount", amount);
-      fail("Invalid amount");
-    }
-  }
-  
-  // Ensure the user's SDK session is active before attempting payment
-  console.log(`[TRACE] Ensuring user session for user ${user.id}`);
-  const { ensureUserSession } = await import("./wallet/sessionRestore");
-  const sessionRestored = await ensureUserSession(user.id);
-  console.log(`[TRACE] Session restored: ${sessionRestored}`);
-
-  // TODO: Implement in browser
-  // let { type, invoice_amount_msat, amount_msat, invoice_node_id, payee } =
-  //   await ln.decode(pr);
-  // if (type.includes("bolt12")) {
-  //   amount_msat = invoice_amount_msat;
-  //   payee = invoice_node_id;
-  // }
-
-  // let minfee = 2;
-  // const { channels } = await ln.listpeerchannels();
-  // if (channels.some((c) => c.peer_id === payee)) minfee = 0;
-
-  // More generous fee calculation for better routing success
-  if (!fee) {
-    if (amount < 50) {
-      // For very small amounts (< 50 sats), use fixed fee
-      fee = 10; // Small fixed fee
-    } else if (amount < 100) {
-      // For small amounts (50-100 sats), use percentage but cap it
-      fee = Math.min(20, Math.round(amount * 0.2)); // 20% max 20 sats
-    } else if (amount < 1000) {
-      // For medium amounts (100-1000 sats), use moderate percentage
-      fee = Math.max(10, Math.round(amount * 0.05)); // 5% or 10 sats minimum
-    } else if (amount > 10000) {
-      // For large payments, use small percentage
-      fee = Math.max(50, Math.round(amount * 0.005)); // 0.5% or 50 sats minimum
-    } else {
-      // Default for normal amounts
-      fee = Math.max(20, Math.round(amount * 0.01)); // 1% or 20 sats default
-    }
-  } else {
-    fee = Math.max(parseInt(fee), 5); // User-specified fee, minimum 5 sats
-  }
-  
-  if (fee < 0) fail("Fee cannot be negative");
-
-  // TODO: Implement in browser
-  // const { pays } = await ln.listpays(pr);
-  // if (pays.find((p) => p.status === "complete"))
-  //   fail("Invoice has already been paid");
-
-  // if (pays.find((p) => p.status === "pending"))
-  //   fail("Payment is already underway");
-  
-  const amount_msat = amount * 1000;
-
-  // Skip the problematic debit call for now and go straight to payment
-  // We'll handle accounting after the payment succeeds
-  const tempPaymentId = v4();
-  p = {
-    id: tempPaymentId,
-    amount: -(amount || 0),
-    fee: fee || 0,
-    hash: pr,
-    memo,
-    uid: user.id,
-    type: PaymentType.lightning,
-    created: Date.now(),
-    status: "pending"
-  };
-
-  await safeDb.sAdd("pending", pr);
-
-  l("paying lightning invoice", pr.substr(-8), amount, fee);
-  console.log(`[DEBUG] Attempting Lightning payment: amount=${amount}, fee=${fee}, invoice=${pr.substring(0, 50)}...`);
-
-  try {
-    console.log(`[TRACE] Parsing invoice with parseInput`);
-    const parsed = await parseInput(pr, user?.id);
-    console.log(`[TRACE] Parse result:`, parsed);
-    if (!parsed) fail("Invalid payment request")
-    
-    const destination = pr.replace(/\s/g, "").toLowerCase();
-    const isLnAddress = destination.includes("@");
-    
-    if (isLnAddress && !amount) {
-      fail("Amount required for Lightning address");
-    }
-    
-    // Validate amount - this will throw with a specific error message if invalid
-    if (amount) {
-      try {
-        await validateAmount(amount, false);
-      } catch (validationError) {
-        // Pass through the specific validation error message
-        fail(validationError.message);
-      }
-    }
-    
-    let result;
-    if (isLnAddress) {
-      result = await payLightningAddress(destination, amount, memo, user.id);
-    } else {
-      // Very generous max fee limits to ensure routing success
-      // For 100 sat payments, we need to allow high fees
-      const maxFeeSat = amount <= 100 
-        ? amount // Allow up to 100% fees for 100 sats or less
-        : amount < 500
-          ? Math.round(amount * 0.5) // Up to 50% for small amounts
-          : amount < 1000 
-            ? Math.round(amount * 0.2) // Up to 20% for medium payments
-            : Math.max(100, Math.round(amount * 0.05)); // Up to 5% for larger payments
-        
-      l(`Attempting Lightning payment: amount=${amount} sats, maxFee=${maxFeeSat} sats`);
-      console.log(`[DEBUG] Calling sendPayment with: amount=${amount}, maxFee=${maxFeeSat}, userId=${user.id}`);
-      result = await sendPayment(destination, amount, memo, null, maxFeeSat, user.id);
-    }
-    
-    console.log(`[DEBUG] Payment result:`, result);
-    if (result && result.payment) {
-      // Payment succeeded, now handle accounting
-      try {
-        // Deduct from user balance
-        const actualAmount = result.payment.amountSat || amount;
-        const actualFee = result.payment.feesSat || fee || 0;
-        
-        // Update payment record
-        p.amount = -actualAmount;
-        p.fee = actualFee;
-        p.preimage = result.payment.preimage;
-        p.completed = Date.now();
-        p.status = "complete";
-        
-        // Save payment record
-        await s(`payment:${p.id}`, p);
-        await db.lPush(`${user.id}:payments`, p.id);
-        
-        // Update user balance
-        await db.incrBy(`balance:${user.id}`, -(actualAmount + actualFee));
-        
-        await safeDb.sRem("pending", pr);
-      } catch (accountingErr) {
-        console.error("[ERROR] Failed to update accounting after successful payment:", accountingErr);
-        // Payment succeeded even if accounting fails
-      }
-    } else {
-      throw new Error("Payment failed");
-    }
-  } catch (e) {
-    console.error(`[DEBUG] Payment failed with error:`, e);
-    console.error(`[DEBUG] Error message:`, e.message);
-    console.error(`[DEBUG] Error stack:`, e.stack);
-    err("failed to pay", pr.substr(-8), e.message);
-    
-    // Clean up pending status
-    await safeDb.sRem("pending", pr);
-    
-    // Don't call reverse() since we didn't debit yet
-    throw e;
-  }
-
-  return p;
 };
 
 export const sendInternal = async ({
