@@ -34,7 +34,7 @@ const startTime = Date.now();
 async function checkDatabase(): Promise<HealthCheckComponent> {
   const start = Date.now();
   try {
-    await safeDb.ping();
+    await db.ping();
     return {
       name: 'database',
       status: 'healthy',

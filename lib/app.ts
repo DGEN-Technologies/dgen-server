@@ -22,7 +22,9 @@ const config = getConfig();
 const app = fastify({
   logger: true,
   disableRequestLogging: true,
-  maxParamLength: 500,
+  routerOptions: {
+    maxParamLength: 500,
+  },
   trustProxy: config.security?.trustProxy ?? false,
 });
 
@@ -137,6 +139,8 @@ app.addHook("onResponse", async (req, reply) => {
   }
 });
 
+const getRateLimitIp = (req) => getClientIp(req) || req.ip || "unknown";
+
 app.register(fastifyRateLimit, {
   allowList: (req) => {
     const url = req.raw.url || "";
@@ -144,7 +148,7 @@ app.register(fastifyRateLimit, {
   },
   max: 2000,
   timeWindow: 10000,
-  keyGenerator: (req) => getClientIp(req) || req.ip || "unknown",
+  keyGenerator: (req) => getRateLimitIp(req),
   errorResponseBuilder: () => {
     return {
       statusCode: 429,
@@ -168,11 +172,11 @@ app.register(fastifyRateLimit, {
     if (userId) {
       return `user:${userId}`;
     }
-    const ip = getClientIp(req) || req.ip || "unknown";
+    const ip = getRateLimitIp(req);
     return `ip:${ip}`;
   },
   errorResponseBuilder: (req) => {
-    const ip = getClientIp(req) || req.ip || "unknown";
+    const ip = getRateLimitIp(req);
     const ua = req.headers["user-agent"] || "unknown";
     const userId = req.user?.id || "anonymous";
 
@@ -210,7 +214,11 @@ const sessionKey = (() => {
   }
   const hexLike =
     sessionSecret.length % 2 === 0 && /^[0-9a-fA-F]+$/.test(sessionSecret);
-  return Buffer.from(sessionSecret, hexLike ? "hex" : "utf8");
+  const key = Buffer.from(sessionSecret, hexLike ? "hex" : "utf8");
+  if (key.length !== 32) {
+    throw new Error("SESSION_SECRET must be 32 bytes (64 hex chars if hex-encoded)");
+  }
+  return key;
 })();
 
 app.register(fastifySecureSession, {

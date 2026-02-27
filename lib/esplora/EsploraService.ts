@@ -1328,8 +1328,12 @@ export class EsploraService {
 
     if (!response.ok) {
       this.bumpStat(statKey, "errors");
-      await response.text();
-      throw new EsploraHttpError(response.status, response.statusText);
+      const errorText = await response.text();
+      const detail =
+        errorText.length > 0
+          ? `${response.statusText}: ${errorText.slice(0, 500)}`
+          : response.statusText;
+      throw new EsploraHttpError(response.status, detail);
     }
 
     // Success - reset error counter
