@@ -193,43 +193,19 @@ const isValidBech32Address = (address: string): boolean => {
   return false;
 };
 
-const getBlech32Decoders = (): Array<{ decode: (value: string, limit?: number) => any }> => {
-  const lib: any = blech32Lib as any;
-  const candidates: Array<{ decode?: (value: string, limit?: number) => any }> = [
-    lib,
-    lib?.default,
-    lib?.blech32,
-    lib?.blech32m,
-    lib?.default?.blech32,
-    lib?.default?.blech32m,
-  ];
-  const decoders: Array<{ decode: (value: string, limit?: number) => any }> = [];
-  for (const candidate of candidates) {
-    if (candidate && typeof candidate.decode === "function") {
-      decoders.push(candidate as { decode: (value: string, limit?: number) => any });
-    }
-  }
-  return decoders;
-};
-
 const isValidBlech32Address = (address: string): boolean => {
   if (!bech32Address.test(address)) return false;
   const normalized = address.toLowerCase();
   const prefix = normalized.split("1")[0];
   if (!bech32Prefixes.has(prefix)) return false;
-
-  const decoders = getBlech32Decoders();
-  for (const decoder of decoders) {
-    try {
-      decoder.decode(normalized, 2048);
-      return true;
-    } catch {
-      try {
-        decoder.decode(normalized);
-        return true;
-      } catch {}
-    }
-  }
+  try {
+    blech32Lib.Blech32Address.fromString(normalized, blech32Lib.BLECH32);
+    return true;
+  } catch {}
+  try {
+    blech32Lib.Blech32Address.fromString(normalized, blech32Lib.BLECH32M);
+    return true;
+  } catch {}
   return false;
 };
 

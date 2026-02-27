@@ -165,9 +165,9 @@ export async function g(k: string): Promise<any> {
   }
 }
 
-export function s(k: string, v: any): void {
+export function s(k: string, v: any): Promise<void> {
   if (k === "user:null" || k === "user:undefined") fail("null user");
-  withTimeout(db.set(k, JSON.stringify(v)), `set ${k}`).catch((error) => {
+  return withTimeout(db.set(k, JSON.stringify(v)), `set ${k}`).catch((error) => {
     err("redis write failed (s)", k, error?.message || error);
   });
 }
@@ -181,12 +181,15 @@ export async function ga(k: string): Promise<any> {
   }
 }
 
-export function sa(k: string, v: any): void {
+export function sa(k: string, v: any): Promise<void> {
   if (k === "user:null" || k === "user:undefined") {
     warn("###### NULL USER #######");
     console.trace();
   }
-  withTimeout(archive.set(k, JSON.stringify(v)), `archive set ${k}`).catch((error) => {
+  return withTimeout(
+    archive.set(k, JSON.stringify(v)),
+    `archive set ${k}`,
+  ).catch((error) => {
     err("redis archive write failed (sa)", k, error?.message || error);
   });
 }
